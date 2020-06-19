@@ -1,0 +1,19 @@
+TCP chat room
+
+
+Multicasting - UDP
+https://en.wikipedia.org/wiki/Multicast#:~:text=In%20computer%20networking%2C%20multicast%20is,point%2Dto%2Dmultipoint%20communication.
+https://wiki.python.org/moin/UdpCommunication
+https://pymotw.com/2/socket/udp.html
+
+django app running a celery task?
+the task manages workers?
+
+
+
+one master container scheduling jobs
+    - master is a django app
+multiple slave containers doing the work (ex.: downloading html, counting occurrences of a word)
+    - slave is just a containers waiting for task, communicating via sockets? django channels?
+create a screen that will show a progress (logs from a worked) in real time
+    - in master's django app, something like django channel's tutorial chat app / react app?

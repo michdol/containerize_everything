@@ -1,0 +1,42 @@
+version: "3.0"
+services:
+
+    client:
+      container_name: client
+      build:
+        context: ./
+        dockerfile: ./docker_files/client
+      ports:
+        - "8001:8000"
+        - "2201:22"
+      volumes:
+        - ./:/var/client
+      depends_on:
+        - server
+
+    server:
+      container_name: server
+      build:
+        context: ./
+        dockerfile: ./docker_files/server_compose
+      ports:
+        - "8002:8000"
+        - "2202:22"
+      volumes:
+        - ./:/var/server
+
+    worker:
+      build:
+        context: ./
+        dockerfile: ./docker_files/worker
+      ports:
+        - "8003:8000"
+      volumes:
+        - ./:/var/worker
+      depends_on:
+        - server
+
+volumes:
+  worker:
+  client:
+  server:
