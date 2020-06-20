@@ -5,9 +5,9 @@ import socket
 from typing import Dict, List
 
 import settings
-from custom_types.custom_types import Address
 
-HEADER_LENGTH = 10
+from constants import HEADER_LENGTH
+from custom_types.custom_types import Address
 
 
 class Client(object):

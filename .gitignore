@@ -2,3 +2,4 @@ certificates/
 containers/certificates/
 containers/__pycache__/
 containers/.mypy*/
+*.pyc
