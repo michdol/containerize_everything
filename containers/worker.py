@@ -52,6 +52,8 @@ class Worker(object):
 
 	def build_payload(self, message: str, message_type: MessageType) -> bytes:
 		padding_character = ""
+		status = self.status
+		message_length = len(message)
 		header = f"{message_length}:{message_type:02d}:{status:02d}{padding_character:<{WORKER_HEADER_LENGTH}}"
 		payload = "{header}\n{message}".format(
 			header=header,
