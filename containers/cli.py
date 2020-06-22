@@ -14,16 +14,18 @@ def parse_worker_header(header: bytes) -> WorkerHeader:
     return WorkerHeader(int(message_length), int(message_type), int(worker_status))
 
 
-def main():
+def main(*args):
     format_ = "%(asctime)s %(levelname)s: %(message)s"
     logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
 
+    logging.info("ARGS {}".format(args))
     # Create a socket
     # socket.AF_INET - address family, IPv4, some otehr possible are AF_INET6, AF_BLUETOOTH, AF_UNIX
     # socket.SOCK_STREAM - TCP, conection-based, socket.SOCK_DGRAM - UDP, connectionless, datagrams, socket.SOCK_RAW - raw IP packets
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # Connect to a given ip and port
+    logging.info("Connecting to {}:{}".format(*SERVER_ADDRESS))
     client_socket.connect(SERVER_ADDRESS)
 
     # Set connection to non-blocking state, so .recv() call won;t block, just return some exception we'll handle
@@ -43,23 +45,25 @@ def main():
 
     while True:
         # Wait for user to input a message
-        message = get_data()
+        message = args[0][1] if len(args[0]) > 1 else None
         sleep(1)
         # If message is not empty - send it
         if message:
+            logging.info("Sending message: {}".format(message))
             # Encode message to bytes, prepare header and convert to bytes, like for username above, then send
             message_header = f"{len(message):<{HEADER_LENGTH}}".encode('utf-8')
             logging.info("SENDING MESSAGE:\n{}\n{}".format(str(message_header), message))
             client_socket.send(message_header + message.encode("utf-8"))
         try:
             while True:
-                header = client_socket.recv(WORKER_HEADER_LENGTH)
+                header = client_socket.recv(HEADER_LENGTH)
                 if len(header) == 0:
-                    loggier.error("Connection closed by server")
+                    logging.error("Connection closed by server")
                     sys.exit()
-                parsed_header: WorkerHeader = parse_worker_header(header)
-                message: bytes = client_socket.recv(parsed_header.message_length)
-                logging.info("HEADER: {}\nMESSAGE: {}".format(parsed_header, message))
+                message_length = int(header.decode("utf-8").strip())
+                print(message_length, type(message_length))
+                message: bytes = client_socket.recv(message_length)
+                logging.info("MESSAGE: {}".format(message.decode('utf-8')))
         except IOError as e:
             # This is normal on non blocking connections - when there are no incoming data error is going to be raised
             # Some operating systems will indicate that using AGAIN, and some using WOULDBLOCK error code
@@ -74,5 +78,10 @@ def main():
 
         except Exception as e:
             # Any other exception - something happened, exit
+            raise e
             logging.error("RECEIVE ERROR: {}".format(e))
             sys.exit()
+
+
+if __name__ == "__main__":
+    main(sys.argv)

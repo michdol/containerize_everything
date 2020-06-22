@@ -21,6 +21,7 @@ services:
         dockerfile: ./docker_files/server_compose
       ports:
         - "8002:8000"
+        - "8003:8001"
         - "2202:22"
       volumes:
         - ./:/var/server
@@ -30,7 +31,7 @@ services:
         context: ./
         dockerfile: ./docker_files/worker
       ports:
-        - "8003:8000"
+        - "8004:8000"
       volumes:
         - ./:/var/worker
       depends_on:

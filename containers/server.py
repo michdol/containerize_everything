@@ -2,103 +2,67 @@ import select
 import socket
 import logging
 
-from typing import List, Dict
+from typing import List, Dict, Optional
 
-from constants import HEADER_LENGTH, WORKER_HEADER_LENGTH
+from constants import (
+	HEADER_LENGTH,
+	WORKER_HEADER_LENGTH,
+	SERVER_ADDRESS_WORKERS
+)
 from custom_types.custom_types import Address, WorkerHeader
 from client import Client, UndefinedClient
 from worker import Worker
 
 
-class Server(object):
-	def __init__(self, host: str, port: int, workers_port: int):
+class ClientsServer(object):
+	def __init__(self, host: str, port: int):
 		self.address: Address = (host, port)
-		self.workers_address: Address = (host, workers_port)
 		self.clients: Dict = {}
-		self.workers: Dict = {}
-		self.master: Client = UndefinedClient("", -1)
-		self.server_socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.clients_socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.workers_socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.clients_socket.bind(self.address)
-		self.server_socket.bind(self.workers_address)
-		self.sockets: List[socket.socket] = [self.server_socket]
-		self.workers_sockets: List[socket.socket] = [self.workers_socket]
-		self.last_worker_id = 0
+		self.master: Optional[Client] = None
+		self.socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		self.socket.bind(self.address)
+		self.sockets: List[socket.socket] = [self.socket]
 
 	def serve_forever(self):
 		logging.info("Clients socket listening on {}:{}".format(*self.address))
-		self.clients_socket.listen()
-		logging.info("Workers socket listening on {}:{}".format(*self.workers_address))
-		self.workers_socket.listen()
+		self.socket.listen()
 		while True:
-			self.handle_clients_socket()
-			self.handle_workers_socket()
+			read, _, exception = select.select(self.sockets, [], self.sockets)
+			logging.debug("MASTER: {}".format(self.master))
+			for notified_socket in read:
+				# New connection
+				if notified_socket is self.socket:
+					client_socket, client_address = self.socket.accept()
+					client = Client(client_socket, client_address)
+					incomming_payload: Dict = self.receive_message(client)
+					if not incomming_payload:
+						logging.info("{} Payload empty, connection closed".format(client))
+						continue
+					client.set_header(incomming_payload["header"])
+					client.set_username(incomming_payload["data"])
+					if client.is_master():
+						logging.debug("Master connected")
+						self.master = client
+					self.sockets.append(client.socket)
+					self.clients[client.socket] = client
+					logging.info("{} New connection accepted".format(client))
+				else:
+					client: Client = self.clients[notified_socket]
+					incomming_payload: Dict = self.receive_message(client)
+					if not incomming_payload:
+						logging.info("{} Connection closed, removing client".format(client))
+						self.sockets.remove(notified_socket)
+						del self.clients[notified_socket]
+						continue
+					logging.info("{} Notifying other clients by {}".format(client, client.username))
+					payload: bytes = self.get_broadcast_payload(client, incomming_payload)
+					self.broadcast(client, payload)
 
-	def handle_workers_socket(self):
-		read, _, exception = select.select(self.workers_sockets, [], self.workers_sockets)
-		for notified_socket in read:
-			if notified_socket == self.workers_socket:
-				worker_socket, worker_address = self.workers_socket.accept()
-				worker = Worker(worker_socket, worker_address)
-				# TODO: should this expect message here if this is initial connection
-				payload: Dict = self.receive_worker_payload(worker)
-				if not payload:
-					logging.info("{} Payload empty, connection closed".format(worker))
-					continue
-				self.last_worker_id += 1
-				worker.id = self.last_worker_id
-				self.workers_sockets.append(worker.socket)
-				self.workers[worker.socket] = worker
-				logging.info("{} connected")
-			else:
-				worker: Worker = self.workers[notified_socket]
-				payload: Dict = self.receive_worker_payload(worker)
-				if not payload:
-					logging.info("{} Connection closed, removing".format(worker))
-					self.workers_sockets.remove(notified_socket)
-					del self.workers[notified_socket]
-					continue
-				logging.debug("{} TMP PAYLOAD {}".format(worker, payload))
-				# TODO: if results > notify clients
-				# if statistics, errors > take server action
-				self.broadcast_worker_payload(worker, payload)
-
-	def handle_clients_socket(self):
-		read, _, exception = select.select(self.sockets, [], self.sockets)
-		for notified_socket in read:
-			# New connection
-			if notified_socket == self.clients_socket:
-				client_socket, client_address = self.clients_socket.accept()
-				client = Client(client_socket, client_address)
-				incomming_payload: Dict = self.receive_message(client)
-				if not incomming_payload:
-					logging.info("{} Payload empty, connection closed".format(client))
-					continue
-				client.set_header(incomming_payload["header"])
-				client.set_username(incomming_payload["data"])
-				if client.is_master():
-					logging.debug("Master connected")
-					self.master = client
-				self.sockets.append(client.socket)
-				self.clients[client.socket] = client
-				logging.info("{} New connection accepted".format(client))
-			else:
-				client: Client = self.clients[notified_socket]
-				incomming_payload: Dict = self.receive_message(client)
-				if not incomming_payload:
-					logging.info("{} Connection closed, removing client".format(client))
+				for notified_socket in exception:
+					logging.info("Removing sockets with exception\t{}:{}".format(*notified_socket.getpeername()))
 					self.sockets.remove(notified_socket)
 					del self.clients[notified_socket]
-					continue
-				logging.info("{} Notifying other clients by {}".format(client, client.username))
-				payload: bytes = self.get_broadcast_payload(client, incomming_payload)
-				self.broadcast(client, payload)
-
-			for notified_socket in self.exception_sockets:
-				logging.info("Removing sockets with exception\t{}:{}".format(*notified_socket.getpeername()))
-				self.sockets.remove(notified_socket)
-				del self.clients[notified_socket]
 
 	def broadcast(self, client: Client, payload):
 		for client_socket in self.clients:
@@ -107,17 +71,18 @@ class Server(object):
 
 	def get_broadcast_payload(self, client: Client, payload) -> bytes:
 		# TODO: this payload sucks
-		payload_str = "{username_header!r}{username!r}{payload_header!r}{payload!r}".format(
-			username_header=client.raw_header,
-			username=client.raw_username,
-			payload_header=payload["header"],
-			payload=payload["data"]
+		payload_str = "{username_header}{username}{payload_header}{payload}".format(
+			username_header=client.raw_header.decode('utf-8'),
+			username=client.raw_username.decode('utf-8'),
+			payload_header=payload["header"].decode("utf-8"),
+			payload=payload["data"].decode("utf-8")
 		)
 		return payload_str.encode("utf-8")
 
 	def broadcast_worker_payload(self, worker: Worker, payload: Dict):
 		message_type = payload["header"].message_type
-		data = worker.build_payload(payload["message"], message_type)
+		# data = worker.build_payload(payload["message"], message_type)
+		data = ""
 		for client_socket in self.clients:
 			client_socket.send(data)
 
@@ -129,7 +94,7 @@ class Server(object):
 				logging.info("{}: No data received, connection has been closed.".format(client))
 				return {}
 			message_length = int(message_header.decode("utf-8"))
-			logging.info("Message length %d", message_length)
+			logging.info("Message length {}".format(message_length))
 			message: bytes = client.socket.recv(message_length)
 			logging.info("{}: Received message\n{}".format(client, message.decode("utf-8")))
 			return {"header": message_header, "data": message}
@@ -154,8 +119,8 @@ class Server(object):
 
 	def parse_worker_header(self, header: bytes) -> WorkerHeader:
 		# TODO: check Python typing Optional
-		message_length, message_type, worker_status = header.decode("utf-8").strip().split(":")
-		return WorkerHeader(int(message_length), int(message_type), int(worker_status))
+		values = header.decode("utf-8").strip().split("|")
+		return WorkerHeader(*[int(v) for v in values])
 
 
 if __name__ == "__main__":
@@ -163,5 +128,5 @@ if __name__ == "__main__":
 	logging.basicConfig(format=format_, level=logging.DEBUG,
 											datefmt="%H:%M:%S")
 
-	server = Server("0.0.0.0", 8000, 8001)
+	server = ClientsServer("0.0.0.0", 8000)
 	server.serve_forever()

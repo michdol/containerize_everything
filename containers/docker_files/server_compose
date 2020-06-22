@@ -16,5 +16,5 @@ WORKDIR /var/server
 RUN pip install --no-cache-dir -r /var/server/requirements/server.txt
 ENV CLIENT_CONTAINER_NAME containers_client_1
 
-EXPOSE 8000 22
+EXPOSE 8000 8001 22
 CMD ["/usr/sbin/sshd", "-D"]
