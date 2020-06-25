@@ -29,8 +29,3 @@ class Client(object):
   def is_master(self) -> bool:
     logging.debug("is_master(): {}, {}".format(self.username, settings.CLIENT_CONTAINER_NAME))
     return self.username == settings.CLIENT_CONTAINER_NAME
-
-
-class UndefinedClient(Client):
-  def is_master(self):
-    return False

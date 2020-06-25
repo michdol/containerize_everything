@@ -49,6 +49,9 @@ class Worker_(object):
     logging.info("Sending {}".format(initial_message))
     self.socket.send(initial_message.encode("utf-8"))
     while True:
+      payload = self.build_payload("Hello from worker", MessageType.INFO)
+      self.socket.send(payload.encode('utf-8'))
+      sleep(0.5)
       try:
         header = self.socket.recv(SERVER_HEADER_LENGTH)
         if len(header) == 0:
