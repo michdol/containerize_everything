@@ -14,6 +14,21 @@ class Connection(object):
 		return "Connection({})".format(self.id)
 
 
+class Client(Connection):
+	def __str__(self) -> str:
+		return "Client({})".format(self.id)
+
+
+class Master(Connection):
+	def __str__(self) -> str:
+		return "Master({})".format(self.id)
+
+
+class Worker(Connection):
+	def __str__(self) -> str:
+		return "Worker({})".format(self.id)
+
+
 class Request(object):
 	def __init__(self):
 		self.raw_header: bytes = b''
@@ -24,6 +39,9 @@ class Request(object):
 		self.message_type = 0
 		self.message_length = 0
 		self.message = None
+
+	def __str__(self) -> str:
+		return f"Request({self.source}/{self.destination}:{self.message_type})"
 
 	def build_payload(self) -> bytes:
 		# TODO: check how to concatenate bytes
