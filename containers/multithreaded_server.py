@@ -1,9 +1,12 @@
 import logging
 import select
 import socket
+import uuid
+import queue
 
 from typing import Dict, List, Tuple, Optional
 
+from constants import HEADER_LENGTH
 from custom_types.custom_types import Address, WorkerHeader
 from errors import (
 	AuthenticationError,
@@ -23,6 +26,7 @@ class Server(object):
 		self.master: Optional[Master] = None
 		self.clients: Dict[socket.socket, Connection] = {}
 		self.workers: Dict[socket.socket, Worker] = {}
+		self.messages: queue.Queue = queue.Queue()
 
 	def serve_forever(self):
 		logging.info("Listening on {}:{}".format(*self.address))
@@ -38,14 +42,16 @@ class Server(object):
 		finally:
 			for connection in self.sockets:
 				connection.close()
+			self.socket.close()
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
 			request: Request = self.build_request(client_socket)
 			logging.debug("Received {}".format(request))
-			client: Connection = self.authenticate(client_socket, request)
+			client: Connection = self.authenticate(client_socket, address, request)
 			logging.debug("{} connected".format(client))
-			self.build_response(client, request)
+			response: bytes = self.build_response(client, request)
+			client.socket.send(response)
 		except Exception as e:
 			logging.error("Exception while handling new connection {}".format(e))
 			self.handle_exception(client_socket, e)
@@ -81,18 +87,18 @@ class Server(object):
 			request (Request)
 		"""
 		header: bytes = client_socket.recv(HEADER_LENGTH)
-		values = [int(value) for value in header.decode("utf-8").split("|")]
-		message_length = values[5]
+		values = [value for value in header.decode("utf-8").split("|")]
+		message_length = int(values[5])
 		message: bytes = client_socket.recv(message_length)
 		return Request(
 			raw_header=header,
 			raw_message=message,
 			source=values[0],
 			destination=values[1],
-			time_sent=values[2],
-			message_type=values[3],
-			message_length=values[4],
-			message=message.decode("utf-8")
+			time_sent=int(values[2]),
+			message_type=int(values[3]),
+			message_length=int(values[4]),
+			message=message.decode("utf-8")  # TODO: should this be json.loads(message)
 		)
 
 	def authenticate(self, client_socket: socket.socket, address: Address, request: Request) -> Connection:
@@ -113,16 +119,16 @@ class Server(object):
 			MasterAlreadyConnectedError - if Master client has already been connected
 			AuthenticationError - in case authentication fails
 		"""
-		client = None
+		client: Optional[Connection] = None
 		id_ = uuid.uuid4()
 		if request.message == "I'm a client":
-			client = Client(id=id_, socket=client_socket, address=address)
+			client = Client(id_=id_, sock=client_socket, address=address)
 			self.clients[client_socket] = client
 		elif request.message == "I'm a worker":
-			client = Worker(id=id_, socket=client_socket, address=address)
+			client = Worker(id_=id_, sock=client_socket, address=address)
 			self.workers[client_socket] = client
 		elif request.message == "I'm a master":
-			client = Master(id=id_, socket=client_socket, address=address)
+			client = Master(id_=id_, sock=client_socket, address=address)
 			if not self.master:
 				logging.info("{} has connected")
 				self.master = client
@@ -139,11 +145,14 @@ class Server(object):
 		request: Request = self.build_request(client_socket)
 		logging.debug("Received {}".format(request))
 		if client_socket in self.workers:
-			self.handle_worker_message(self.workers[client_socket])
+			# self.handle_worker_message(self.workers[client_socket])
+			pass
 		elif self.master and client_socket is self.master:
-			self.handle_master_message()
+			# self.handle_master_message()
+			pass
 		elif client_socket in self.clients:
-			self.handle_client_message(self.clients[client_socket])
+			# self.handle_client_message(self.clients[client_socket])
+			pass
 		else:
 			logging.debug("I don't know what to do atm")
 		# Broadcast message to request's destination
@@ -151,8 +160,8 @@ class Server(object):
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
 		pass
 
-	def build_response(self, client: Connection, request: Request):
-		pass
+	def build_response(self, client: Connection, request: Request) -> bytes:
+		return b''
 
 	def broadcast(self, request: Request):
 		pass
