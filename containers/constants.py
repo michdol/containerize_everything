@@ -3,17 +3,26 @@ from enum import Enum, IntEnum
 from custom_types import Address
 
 
-HEADER_LENGTH = 91
+HEADER_LENGTH = 100
 
 HOST_NAME = "server"
 SERVER_PORT = 8000
 SERVER_ADDRESS: Address = (HOST_NAME, SERVER_PORT)
 
 
+DUMMY_UUID = "00000000-0000-0000-0000-000000000000"
+
 class MessageType(IntEnum):
 	INFO = 1
 	MESSAGE = 2
 	ERROR = 9
+
+
+class DestinationType(str, Enum):
+	SERVER = "s"
+	CLIENT = "c"
+	GROUP = "g"
+
 
 """
 Client/Worker/Master connects to server

@@ -1,22 +1,31 @@
 import logging
 import select
 import socket
+import threading
 import uuid
 import queue
 
 from typing import Dict, List, Tuple, Optional
 
-from constants import HEADER_LENGTH
+from constants import (
+	HEADER_LENGTH,
+	DUMMY_UUID,
+	SERVER_ADDRESS,
+	MessageType,
+	DestinationType,
+)
 from custom_types.custom_types import Address, WorkerHeader
 from errors import (
 	AuthenticationError,
 	MasterAlreadyConnectedError,
 )
+from payload_related import create_payload
 from protocol import Request, Connection, Client, Worker, Master
 
 
 class Server(object):
 	def __init__(self, host: str, port: int):
+		self.id = uuid.uuid4()
 		self.address: Address = (host, port)
 		self.socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -27,11 +36,26 @@ class Server(object):
 		self.clients: Dict[socket.socket, Connection] = {}
 		self.workers: Dict[socket.socket, Worker] = {}
 		self.messages: queue.Queue = queue.Queue()
+		self.event = threading.Event()
+		self.broadcast_thread = None
+
+	def broadcast_subroutine(self):
+		while not self.event.is_set():
+			if not self.messages.empty():
+				self.dispatch(self.messages.get())
 
 	def serve_forever(self):
 		logging.info("Listening on {}:{}".format(*self.address))
 		self.socket.listen()
 		try:
+			# TODO:
+			# - implement simple client/worker scripts
+			# - implement basic main functionalities
+			# - continue
+
+			#	-	start thread for broadcasting
+			# - add broadcasting feature
+			# - implement authentication logic
 			read, _, exception = select.select(self.sockets, [], self.sockets)
 			for notified_socket in self.sockets:
 				if notified_socket is self.socket:
@@ -50,7 +74,14 @@ class Server(object):
 			logging.debug("Received {}".format(request))
 			client: Connection = self.authenticate(client_socket, address, request)
 			logging.debug("{} connected".format(client))
-			response: bytes = self.build_response(client, request)
+			response: bytes = create_payload(
+				source=self.id,
+				destination=client.id,
+				destination_type=DestinationType.CLIENT,
+				message="connected, ok",
+				message_type=MessageType.MESSAGE
+			)
+			logging.debug("{} sending response {}".format(client, response))
 			client.socket.send(response)
 		except Exception as e:
 			logging.error("Exception while handling new connection {}".format(e))
@@ -65,20 +96,25 @@ class Server(object):
 						 in the header.
 
 		Example request:
-		0				 1						 2					 3							4
-		{source}|{destination}|{time_sent}|{message_type}|{message_length}\n{message}
+		0				 1															 2					 3							4
+		{source}|{destination_type}{destination}|{time_sent}|{message_type}|{message_length} {message}
 
-		source - uuid.uuid4() (32 characters)
-		destination - uuid.uuid4() prefixed with 'i' or 'g' (33 characters)
+		source - uuid.UUID (32 characters)
+		destination_type - str 'i' or 'g'
 									i - id, destination is specific client
 									g - group, destination is a group of clients
+		destination - uuid.UUID (32 characters)
 		time_sent - int (10 digits)
 		message_type - int (zero-padded 2 digits) (check constants.py)
 		message_length - int (zero-padded 10 digits), length of the message
 										 following the header
 
-		New line character separates header with message.
+		Space character separates header with message.
 		message - json
+
+		Considering above HEADER_LENGTH constants has been choosen to 100 characters
+		including the space separating header from message. Any socket after receiving header
+		will have to receive only message without having to worry about the space.
 
 		Args:
 			client_socket (socket.socket)
@@ -87,8 +123,10 @@ class Server(object):
 			request (Request)
 		"""
 		header: bytes = client_socket.recv(HEADER_LENGTH)
+		logging.debug("HEADER BYTES {}".format(header))
 		values = [value for value in header.decode("utf-8").split("|")]
-		message_length = int(values[5])
+		logging.debug("VALUES {}".format(values))
+		message_length = int(values[4])
 		message: bytes = client_socket.recv(message_length)
 		return Request(
 			raw_header=header,
@@ -157,11 +195,50 @@ class Server(object):
 			logging.debug("I don't know what to do atm")
 		# Broadcast message to request's destination
 
+	def tmp_handle_message(self, client: Connection):
+		try:
+			request: Request = self.build_request(client.socket)
+			logging.debug("Received {}".format(request))
+			# TODO:
+			# handle each type of client in separate method (thread?)
+			client: Connection = self.identify(client_socket)
+			logging.debug("{} connected".format(client))
+			response: bytes = create_payload(
+				source=self.id,
+				destination=client.id,
+				destination_type=DestinationType.CLIENT,
+				message="connected, ok",
+				message_type=MessageType.MESSAGE
+			)
+			logging.debug("{} sending response {}".format(client, response))
+			client.socket.send(response)
+		except Exception as e:
+			logging.error("Exception while handling new connection {}".format(e))
+			self.handle_exception(client_socket, e)
+
+	def identify(self, client_socket: socket.socket) -> Connection:
+		if client_socket in self.workers:
+			return self.workers[client_socket]
+		elif client_socket in self.clients:
+			return self.clients[client_socket]
+
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
 		pass
 
 	def build_response(self, client: Connection, request: Request) -> bytes:
+		# Response just with json
 		return b''
 
 	def broadcast(self, request: Request):
 		pass
+
+	def dispatch(self, request: Request):
+		pass
+
+
+if __name__ == "__main__":
+	format_ = "%(asctime)s %(levelname)s: %(message)s"
+	logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
+
+	server = Server(*SERVER_ADDRESS)
+	server.serve_forever()
