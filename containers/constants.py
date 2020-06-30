@@ -3,7 +3,7 @@ from enum import Enum, IntEnum
 from custom_types import Address
 
 
-HEADER_LENGTH = 100
+HEADER_LENGTH = 101
 
 HOST_NAME = "server"
 SERVER_PORT = 8000

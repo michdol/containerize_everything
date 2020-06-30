@@ -1,19 +1,21 @@
 30/06/2020 Creating broadcasting feature
 
-Created simple worker script for debugging broadcasting
-Added MessageType.INITIAL_CONNECTION
-Added separate thread for broadcast subroutine
+1. Created simple worker script for debugging broadcasting
+2. Added MessageType.INITIAL_CONNECTION
+3. Added separate thread for broadcast subroutine
+4. Separated destination_type and destination in the header
 
 Fixed:
 - Bug causing server block on receiving message from the first client
 
+START HERE: write tests
 
 ---------------------------------------------------------------------------------
 
 
 29/06/2020 Creating and parsing payload
 
-Refactored creating header:
+1. Refactored creating header:
 - Created DestinationType - a single character for client/group/server to work as a prefix
 	destination field of the header
 - Changed header - message separator from '\n' to ' ' (single space)

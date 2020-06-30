@@ -59,7 +59,7 @@ def main():
       parsed_header = parse_header(header)
       if parsed_header["message_type"] == MessageType.INITIAL_CONNECTION:
         server_id = parsed_header["source"]
-        own_id = parsed_header["destination"][1:]
+        own_id = parsed_header["destination"]
       message: bytes = client_socket.recv(parsed_header["message_length"])
       logging.info("MESSAGE: {}".format(message.decode('utf-8')))
     except IOError as e:

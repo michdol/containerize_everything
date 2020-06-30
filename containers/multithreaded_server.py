@@ -36,6 +36,7 @@ class Server(object):
 
 		self.master: Optional[Master] = None
 		self.clients: Dict[socket.socket, Connection] = {}
+		self.clients_index: Dict[uuid.UUID, socket.socket] = {}
 		self.workers: Dict[socket.socket, Worker] = {}
 		self.messages: queue.Queue = queue.Queue()
 		self.event = threading.Event()
@@ -106,7 +107,7 @@ class Server(object):
 
 		Example request:
 		0				 1															 2					 3							4
-		{source}|{destination_type}{destination}|{time_sent}|{message_type}|{message_length} {message}
+		{source}|{destination_type}|{destination}|{time_sent}|{message_type}|{message_length} {message}
 
 		source - uuid.UUID (32 characters)
 		destination_type - str 'i' or 'g'
@@ -121,7 +122,7 @@ class Server(object):
 		Space character separates header with message.
 		message - json
 
-		Considering above HEADER_LENGTH constants has been choosen to 100 characters
+		Considering above HEADER_LENGTH constants has been choosen to 101 characters
 		including the space separating header from message. Any socket after receiving header
 		will have to receive only message without having to worry about the space.
 
@@ -137,26 +138,25 @@ class Server(object):
 				return
 			logging.debug("Received header: {}".format(header))
 			values = [value for value in header.decode("utf-8").split("|")]
-			message_length = int(values[4])
+			message_length = int(values[5])
 			message: bytes = client_socket.recv(message_length)
-			destination_type = values[1][0]
-			destination = values[1][1:]
+			destination_type = values[1]
+			destination = uuid.UUID(values[2])
 			return Request(
 				raw_header=header,
 				raw_message=message,
-				source=values[0],
+				source=uuid.UUID(values[0]),
 				destination=destination,
 				destination_type=destination_type,
-				time_sent=int(values[2]),
-				message_type=int(values[3]),
-				message_length=int(values[4]),
+				time_sent=int(values[3]),
+				message_type=int(values[4]),
+				message_length=message_length,
 				message=message.decode("utf-8")  # TODO: should this be json.loads(message)
 			)
 		except socket.error as e:
 			err = e.args[0]
 			if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
 				logging.info("No data available")
-				return
 			else:
 				logging.error("Error receiving data {}".format(e))
 				sys.exit()
@@ -184,6 +184,7 @@ class Server(object):
 		if request.message == "I'm a client":
 			client = Client(id_=id_, sock=client_socket, address=address)
 			self.clients[client_socket] = client
+			self.clients_index[client.id] = client_socket
 		elif request.message == "I'm a worker":
 			client = Worker(id_=id_, sock=client_socket, address=address)
 			self.workers[client_socket] = client
@@ -193,6 +194,7 @@ class Server(object):
 				logging.info("{} has connected")
 				self.master = client
 				self.clients[client_socket] = client
+				self.clients_index[client.id] = client_socket
 			else:
 				raise MasterAlreadyConnectedError("TODO: master attempted connect when already one has been connected")
 		else:
@@ -206,7 +208,6 @@ class Server(object):
 			request: Request = self.build_request(client_socket)
 			if not request:
 				return
-			logging.debug("Received {}".format(request))
 			# TODO:
 			# handle each type of client in separate thread?
 			if client_socket in self.workers:
@@ -221,12 +222,15 @@ class Server(object):
 
 	def handle_worker_request(self, worker: Worker, request: Request):
 		# TODO: for now just broadcast the message
+		logging.debug("{} Incomming new message {}".format(worker, request))
 		self.messages.put(request)
 
 	def handle_master_request(self):
+		logging.debug("{} Incomming new message {}".format(master, request))
 		pass
 
 	def handle_client_request(self, client: Client):
+		logging.debug("{} Incomming new message {}".format(client, request))
 		pass
 
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
@@ -236,11 +240,11 @@ class Server(object):
 		pass
 
 	def dispatch(self, request: Request):
-		recipients = self.get_recipients(request)
+		recipients = self.get_recipients(request.destination, request.destination_type)
 		payload = request.payload()
-		logging.info("Sending {} to {} clients".format(len(recipients)))
-		for client in recipients:
-			client.socket.send(payload)
+		logging.info("Sending {} to {} clients".format(request, len(recipients)))
+		for client_socket in recipients:
+			client_socket.send(payload)
 
 	def get_recipients(self, destination: uuid.UUID, destination_type: DestinationType):
 		recipients = []
@@ -251,9 +255,8 @@ class Server(object):
 			# Do nothing for now
 			pass
 		else:
-			for client in self.clients.values():
-				if client.id == destination:
-					return [client]
+			if destination in self.clients_index:
+				recipients.append(self.clients_index[destination])
 		return recipients
 
 

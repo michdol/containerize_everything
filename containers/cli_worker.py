@@ -55,6 +55,7 @@ def main():
   # Connect to a given ip and port
   logging.info("Connecting to {}:{}".format(*SERVER_ADDRESS))
   client_socket.connect(SERVER_ADDRESS)
+  client_socket.setblocking(False)
 
   # Set connection to non-blocking state, so .recv() call won;t block, just return some exception we'll handle
   # TODO: understand setblocking
@@ -74,22 +75,9 @@ def main():
 
   logging.info("Sending initial payload: {}".format(initial_connection_payload))
   client_socket.send(initial_connection_payload)
-  response = accept_initial_response(client_socket)
-  server_id = response["header"]["source"]
-  own_id = response["header"]["destination"][1:]
-  logging.info("Server id: {}, own id: {}".format(server_id, own_id))
+  server_id = None
+  own_id = None
   while True:
-    message = input("Give me input ")
-    if message:
-      payload = create_payload(
-        source=own_id,
-        destination="d78cd1a6-3fb2-44aa-b222-ddb152412af0",
-        destination_type=DestinationType.CLIENT,
-        message=message,
-        message_type=MessageType.MESSAGE
-      )
-      logging.info("Sending message {}".format(payload))
-      client_socket.send(payload)
     try:
       header: bytes = client_socket.recv(HEADER_LENGTH)
       if len(header) == 0:
@@ -97,6 +85,9 @@ def main():
           sys.exit()
       logging.debug("HEADER BYTES {}".format(header))
       parsed_header = parse_header(header)
+      if parsed_header["message_type"] == MessageType.INITIAL_CONNECTION:
+        server_id = parsed_header["source"]
+        own_id = parsed_header["destination"]
       message: bytes = client_socket.recv(parsed_header["message_length"])
       logging.info("MESSAGE: {}".format(message.decode('utf-8')))
     except IOError as e:
@@ -115,6 +106,17 @@ def main():
       raise e
       logging.error("RECEIVE ERROR: {}".format(e))
       sys.exit()
+    message = input("Give me input ")
+    if message:
+      payload = create_payload(
+        source=own_id,
+        destination="b52d5fb7-9652-4c96-9793-0f73ac1ec031",
+        destination_type=DestinationType.CLIENT,
+        message=message,
+        message_type=MessageType.MESSAGE
+      )
+      logging.info("Sending message {}".format(payload))
+      client_socket.send(payload)
 
 
 if __name__ == "__main__":
