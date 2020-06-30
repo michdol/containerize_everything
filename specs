@@ -4,11 +4,14 @@
 2. Added MessageType.INITIAL_CONNECTION
 3. Added separate thread for broadcast subroutine
 4. Separated destination_type and destination in the header
+5. Created clients_index - id: socket map
+6. Created protocol_tests.py
+7. Created multithreaded_server_tests.py
 
 Fixed:
 - Bug causing server block on receiving message from the first client
 
-START HERE: write tests
+START HERE: continue tests
 
 ---------------------------------------------------------------------------------
 

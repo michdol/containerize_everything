@@ -21,8 +21,7 @@ from errors import (
 	AuthenticationError,
 	MasterAlreadyConnectedError,
 )
-from payload_related import create_payload
-from protocol import Request, Connection, Client, Worker, Master
+from protocol import Request, Connection, Client, Worker, Master, create_payload
 
 
 class Server(object):
@@ -40,7 +39,15 @@ class Server(object):
 		self.workers: Dict[socket.socket, Worker] = {}
 		self.messages: queue.Queue = queue.Queue()
 		self.event = threading.Event()
+		self.main_event = threading.Event()
 		self.broadcast_thread = None
+
+	def is_running(self):
+		return not self.main_event.is_set()
+
+	def shutdown(self):
+		# TODO:
+		self.main_event.set()
 
 	def broadcast_subroutine(self):
 		logging.info("Starting broadcast subroutine")
@@ -57,7 +64,7 @@ class Server(object):
 
 		try:
 			logging.debug("Main thread continues")
-			while True:
+			while self.is_running():
 				# TODO:
 				# - implement simple client/worker scripts
 				# - implement basic main functionalities
@@ -140,7 +147,7 @@ class Server(object):
 			values = [value for value in header.decode("utf-8").split("|")]
 			message_length = int(values[5])
 			message: bytes = client_socket.recv(message_length)
-			destination_type = values[1]
+			destination_type = DestinationType(values[1])
 			destination = uuid.UUID(values[2])
 			return Request(
 				raw_header=header,
@@ -149,7 +156,7 @@ class Server(object):
 				destination=destination,
 				destination_type=destination_type,
 				time_sent=int(values[3]),
-				message_type=int(values[4]),
+				message_type=MessageType(int(values[4])),
 				message_length=message_length,
 				message=message.decode("utf-8")  # TODO: should this be json.loads(message)
 			)
@@ -208,8 +215,7 @@ class Server(object):
 			request: Request = self.build_request(client_socket)
 			if not request:
 				return
-			# TODO:
-			# handle each type of client in separate thread?
+			# TODO: handle each type of client in separate thread?
 			if client_socket in self.workers:
 				self.handle_worker_request(self.workers[client_socket], request)
 			elif client_socket is self.master:
@@ -221,22 +227,16 @@ class Server(object):
 			self.handle_exception(client_socket, e)
 
 	def handle_worker_request(self, worker: Worker, request: Request):
-		# TODO: for now just broadcast the message
 		logging.debug("{} Incomming new message {}".format(worker, request))
 		self.messages.put(request)
 
 	def handle_master_request(self):
 		logging.debug("{} Incomming new message {}".format(master, request))
-		pass
 
 	def handle_client_request(self, client: Client):
 		logging.debug("{} Incomming new message {}".format(client, request))
-		pass
 
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
-		pass
-
-	def broadcast(self, request: Request):
 		pass
 
 	def dispatch(self, request: Request):

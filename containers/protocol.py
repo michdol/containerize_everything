@@ -1,7 +1,10 @@
 import socket
+import time
 import uuid
 
-from constants import HEADER_LENGTH, DestinationType
+from typing import Dict
+
+from constants import HEADER_LENGTH, DestinationType, MessageType
 from custom_types import Address
 
 
@@ -53,3 +56,31 @@ class Request(object):
 
 	def payload(self) -> bytes:
 		return self.raw_header + self.raw_message
+
+
+def create_payload(source: uuid.UUID, destination: str, destination_type: DestinationType, message: str,
+		message_type: MessageType) -> bytes:
+	message_length = len(message)
+	now = int(time.time())
+	payload = "{source}|{destination_type}|{destination}|{time_sent}|{message_type:02d}|{message_length:010d} {message}".format(
+		source=source,
+		destination_type=destination_type,
+		destination=destination,
+		time_sent=now,
+		message_type=message_type,
+		message_length=message_length,
+		message=message
+	)
+	return payload.encode("utf-8")
+
+
+def parse_header(header: bytes) -> Dict:
+	values = header.decode("utf-8").split("|")
+	return {
+		"source": uuid.UUID(values[0]),
+		"destination": uuid.UUID(values[2]),
+		"destination_type": DestinationType(values[1]),
+		"time_sent": int(values[3]),
+		"message_type": MessageType(int(values[4])),
+		"message_length": int(values[5]),
+	}

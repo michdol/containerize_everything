@@ -13,7 +13,7 @@ from constants import (
   DestinationType,
 )
 from custom_types.custom_types import WorkerHeader
-from payload_related import create_payload, parse_header
+from protocol import create_payload, parse_header
 
 
 def main():

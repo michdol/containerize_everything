@@ -9,6 +9,9 @@ HOST_NAME = "server"
 SERVER_PORT = 8000
 SERVER_ADDRESS: Address = (HOST_NAME, SERVER_PORT)
 
+TEST_HOST_NAME = "test_server"
+TEST_SERVER_PORT = 9999
+SERVER_TEST_ADDRESS: Address = (TEST_HOST_NAME, TEST_SERVER_PORT)
 
 DUMMY_UUID = "00000000-0000-0000-0000-000000000000"
 
@@ -24,16 +27,6 @@ class DestinationType(str, Enum):
 	CLIENT = "c"
 	GROUP = "g"
 
-
-"""
-Client/Worker/Master connects to server
-Worker sends some message (work result)
-Worker sends info data about itself
-Master sends command to start/stop/pause work
-Worker sends error
-
-Server broadcasts all info to Client/Master
-"""
 
 class ClientGroup(Enum):
 	CLIENTS = "00000000-0000-0000-0000-00000000"
