@@ -1,6 +1,8 @@
+import errno
 import logging
 import select
 import socket
+import sys
 import threading
 import uuid
 import queue
@@ -40,48 +42,55 @@ class Server(object):
 		self.broadcast_thread = None
 
 	def broadcast_subroutine(self):
+		logging.info("Starting broadcast subroutine")
 		while not self.event.is_set():
 			if not self.messages.empty():
 				self.dispatch(self.messages.get())
+		logging.info("Broadcast subroutine finished")
 
 	def serve_forever(self):
 		logging.info("Listening on {}:{}".format(*self.address))
 		self.socket.listen()
-		try:
-			# TODO:
-			# - implement simple client/worker scripts
-			# - implement basic main functionalities
-			# - continue
+		self.broadcast_thread = threading.Thread(target=self.broadcast_subroutine, daemon=True)
+		self.broadcast_thread.start()
 
-			#	-	start thread for broadcasting
-			# - add broadcasting feature
-			# - implement authentication logic
-			read, _, exception = select.select(self.sockets, [], self.sockets)
-			for notified_socket in self.sockets:
-				if notified_socket is self.socket:
-					client_socket, address = self.socket.accept()
-					self.handle_new_connection(client_socket, address)
-				else:
-					self.handle_message(notified_socket)
+		try:
+			logging.debug("Main thread continues")
+			while True:
+				# TODO:
+				# - implement simple client/worker scripts
+				# - implement basic main functionalities
+				# - continue
+
+				# - implement authentication logic
+				read, _, exception = select.select(self.sockets, [], self.sockets)
+				for notified_socket in read:
+					if notified_socket is self.socket:
+						client_socket, address = self.socket.accept()
+						self.handle_new_connection(client_socket, address)
+					else:
+						self.handle_message(notified_socket)
 		finally:
 			for connection in self.sockets:
 				connection.close()
 			self.socket.close()
+			self.event.set()
+		logging.info("Exiting")
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
 			request: Request = self.build_request(client_socket)
 			logging.debug("Received {}".format(request))
 			client: Connection = self.authenticate(client_socket, address, request)
-			logging.debug("{} connected".format(client))
+			logging.info("{} connected".format(client))
 			response: bytes = create_payload(
 				source=self.id,
 				destination=client.id,
 				destination_type=DestinationType.CLIENT,
 				message="connected, ok",
-				message_type=MessageType.MESSAGE
+				message_type=MessageType.INITIAL_CONNECTION
 			)
-			logging.debug("{} sending response {}".format(client, response))
+			logging.info("{} sending response {}".format(client, response))
 			client.socket.send(response)
 		except Exception as e:
 			logging.error("Exception while handling new connection {}".format(e))
@@ -122,22 +131,35 @@ class Server(object):
 		Returns:
 			request (Request)
 		"""
-		header: bytes = client_socket.recv(HEADER_LENGTH)
-		logging.debug("HEADER BYTES {}".format(header))
-		values = [value for value in header.decode("utf-8").split("|")]
-		logging.debug("VALUES {}".format(values))
-		message_length = int(values[4])
-		message: bytes = client_socket.recv(message_length)
-		return Request(
-			raw_header=header,
-			raw_message=message,
-			source=values[0],
-			destination=values[1],
-			time_sent=int(values[2]),
-			message_type=int(values[3]),
-			message_length=int(values[4]),
-			message=message.decode("utf-8")  # TODO: should this be json.loads(message)
-		)
+		try:
+			header: bytes = client_socket.recv(HEADER_LENGTH)
+			if len(header) == 0:
+				return
+			logging.debug("Received header: {}".format(header))
+			values = [value for value in header.decode("utf-8").split("|")]
+			message_length = int(values[4])
+			message: bytes = client_socket.recv(message_length)
+			destination_type = values[1][0]
+			destination = values[1][1:]
+			return Request(
+				raw_header=header,
+				raw_message=message,
+				source=values[0],
+				destination=destination,
+				destination_type=destination_type,
+				time_sent=int(values[2]),
+				message_type=int(values[3]),
+				message_length=int(values[4]),
+				message=message.decode("utf-8")  # TODO: should this be json.loads(message)
+			)
+		except socket.error as e:
+			err = e.args[0]
+			if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
+				logging.info("No data available")
+				return
+			else:
+				logging.error("Error receiving data {}".format(e))
+				sys.exit()
 
 	def authenticate(self, client_socket: socket.socket, address: Address, request: Request) -> Connection:
 		"""
@@ -180,60 +202,59 @@ class Server(object):
 		return client
 
 	def handle_message(self, client_socket: socket.socket):
-		request: Request = self.build_request(client_socket)
-		logging.debug("Received {}".format(request))
-		if client_socket in self.workers:
-			# self.handle_worker_message(self.workers[client_socket])
-			pass
-		elif self.master and client_socket is self.master:
-			# self.handle_master_message()
-			pass
-		elif client_socket in self.clients:
-			# self.handle_client_message(self.clients[client_socket])
-			pass
-		else:
-			logging.debug("I don't know what to do atm")
-		# Broadcast message to request's destination
-
-	def tmp_handle_message(self, client: Connection):
 		try:
-			request: Request = self.build_request(client.socket)
+			request: Request = self.build_request(client_socket)
+			if not request:
+				return
 			logging.debug("Received {}".format(request))
 			# TODO:
-			# handle each type of client in separate method (thread?)
-			client: Connection = self.identify(client_socket)
-			logging.debug("{} connected".format(client))
-			response: bytes = create_payload(
-				source=self.id,
-				destination=client.id,
-				destination_type=DestinationType.CLIENT,
-				message="connected, ok",
-				message_type=MessageType.MESSAGE
-			)
-			logging.debug("{} sending response {}".format(client, response))
-			client.socket.send(response)
+			# handle each type of client in separate thread?
+			if client_socket in self.workers:
+				self.handle_worker_request(self.workers[client_socket], request)
+			elif client_socket is self.master:
+				self.handle_master_request()
+			else:
+				self.handle_client_request(self.clients[client_socket])
 		except Exception as e:
 			logging.error("Exception while handling new connection {}".format(e))
 			self.handle_exception(client_socket, e)
 
-	def identify(self, client_socket: socket.socket) -> Connection:
-		if client_socket in self.workers:
-			return self.workers[client_socket]
-		elif client_socket in self.clients:
-			return self.clients[client_socket]
+	def handle_worker_request(self, worker: Worker, request: Request):
+		# TODO: for now just broadcast the message
+		self.messages.put(request)
+
+	def handle_master_request(self):
+		pass
+
+	def handle_client_request(self, client: Client):
+		pass
 
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
 		pass
-
-	def build_response(self, client: Connection, request: Request) -> bytes:
-		# Response just with json
-		return b''
 
 	def broadcast(self, request: Request):
 		pass
 
 	def dispatch(self, request: Request):
-		pass
+		recipients = self.get_recipients(request)
+		payload = request.payload()
+		logging.info("Sending {} to {} clients".format(len(recipients)))
+		for client in recipients:
+			client.socket.send(payload)
+
+	def get_recipients(self, destination: uuid.UUID, destination_type: DestinationType):
+		recipients = []
+		if destination_type == DestinationType.GROUP:
+			# Get recipients from a group
+			pass
+		elif destination_type == DestinationType.SERVER:
+			# Do nothing for now
+			pass
+		else:
+			for client in self.clients.values():
+				if client.id == destination:
+					return [client]
+		return recipients
 
 
 if __name__ == "__main__":

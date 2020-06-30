@@ -1,3 +1,16 @@
+30/06/2020 Creating broadcasting feature
+
+Created simple worker script for debugging broadcasting
+Added MessageType.INITIAL_CONNECTION
+Added separate thread for broadcast subroutine
+
+Fixed:
+- Bug causing server block on receiving message from the first client
+
+
+---------------------------------------------------------------------------------
+
+
 29/06/2020 Creating and parsing payload
 
 Refactored creating header:

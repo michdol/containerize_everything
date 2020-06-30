@@ -3,90 +3,119 @@ import logging
 import sys
 import errno
 
-from time import sleep, time
+from time import sleep
 
 from constants import (
-  WORKER_HEADER_LENGTH,
-  SERVER_HEADER_LENGTH,
-  WORKER_HEADER_MESSAGE_LENGTH,
   HEADER_LENGTH,
   SERVER_ADDRESS,
-  SERVER_ADDRESS_WORKERS,
+  DUMMY_UUID,
   MessageType,
-  WorkerStatus
+  DestinationType,
 )
-from custom_types.custom_types import WorkerHeader, ServerHeader
+from custom_types.custom_types import WorkerHeader
+from payload_related import create_payload, parse_header
 
 
-class Worker_(object):
-  def __init__(self):
-    self.id: int = 0
-    self.status: WorkerStatus = WorkerStatus.NOT_CONNECTED
-    self.socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-  def build_payload(self, message: str, message_type: MessageType) -> str:
-    m_len = f"{len(message):04d}"
-    message_length = f"{m_len:<{WORKER_HEADER_MESSAGE_LENGTH}}"
-    time_sent = int(time())
-    header = f"{message_type}|{self.status}|{time_sent}|{message_length}"
-    return "{header}\n{message}".format(
-      header=header,
-      message=message
-    )
-
-  def run(self):
-    logging.info("Connecting to {}".format(SERVER_ADDRESS_WORKERS))
-    # self.socket.connect(SERVER_ADDRESS)
-    self.socket.connect(('server', 8001))
-    self.socket.setblocking(False)
-    host_name = socket.gethostname()
-    worker_address = socket.gethostbyname(host_name)
-    logging.info("Worker {}:{} connecting".format(*worker_address))
-    initial_message: str = self.build_payload(
-      "Hello from {}".format(worker_address),
-      MessageType.INITIAL_CONNECTION
-    )
-    logging.info("Sending {}".format(initial_message))
-    self.socket.send(initial_message.encode("utf-8"))
-    while True:
-      payload = self.build_payload("Hello from worker", MessageType.INFO)
-      self.socket.send(payload.encode('utf-8'))
-      sleep(0.5)
-      try:
-        header = self.socket.recv(SERVER_HEADER_LENGTH)
-        if len(header) == 0:
-          logging.error("Connection closed by server")
-          sys.exit()
-        parsed_header: ServerHeader = self.parse_server_header(header)
-        message: bytes = self.socket.recv(parsed_header.message_length)
-        logging.info("Header: {}\nMessage: {}".format(parsed_header, message.decode("utf-8")))
-      except IOError as e:
-        # This is normal on non blocking connections - when there are no incoming data error is going to be raised
-        # Some operating systems will indicate that using AGAIN, and some using WOULDBLOCK error code
-        # We are going to check for both - if one of them - that's expected, means no incoming data, continue as normal
-        # If we got different error code - something happened
-        if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
-          logging.error("Reading error: {}".format(e))
-          sys.exit()
-
-        # We just did not receive anything
-        continue
-      except Exception as e:
-        logging.error("Receving error: {}".format(e))
+def accept_initial_response(client_socket):
+  try:
+    header: bytes = client_socket.recv(HEADER_LENGTH)
+    if len(header) == 0:
+        logging.error("Connection closed by server")
         sys.exit()
-
-  def parse_server_header(self, header: bytes) -> ServerHeader:
-    values = header.decode("utf-8").strip().split("|")
-    return ServerHeader(*[int(v) for v in values])
+    logging.debug("Initial header {}".format(header))
+    parsed_header = parse_header(header)
+    message: bytes = client_socket.recv(parsed_header["message_length"])
+    logging.info("MESSAGE: {}".format(message.decode('utf-8')))
+    return {"header": parsed_header, "message": message.decode('utf-8')}
+  except IOError as e:
+    print("Error", e)
+    # This is normal on non blocking connections - when there are no incoming data error is going to be raised
+    # Some operating systems will indicate that using AGAIN, and some using WOULDBLOCK error code
+    # We are going to check for both - if one of them - that's expected, means no incoming data, continue as normal
+    # If we got different error code - something happened
+    if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+        logging.error("Reading error: {}".format(e))
+        sys.exit()
+  except Exception as e:
+    # Any other exception - something happened, exit
+    raise e
+    logging.error("RECEIVE ERROR: {}".format(e))
+    sys.exit()  
 
 
 def main():
   format_ = "%(asctime)s %(levelname)s: %(message)s"
   logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
 
-  worker = Worker_()
-  worker.run()
+  # Create a socket
+  # socket.AF_INET - address family, IPv4, some otehr possible are AF_INET6, AF_BLUETOOTH, AF_UNIX
+  # socket.SOCK_STREAM - TCP, conection-based, socket.SOCK_DGRAM - UDP, connectionless, datagrams, socket.SOCK_RAW - raw IP packets
+  client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+  # Connect to a given ip and port
+  logging.info("Connecting to {}:{}".format(*SERVER_ADDRESS))
+  client_socket.connect(SERVER_ADDRESS)
+
+  # Set connection to non-blocking state, so .recv() call won;t block, just return some exception we'll handle
+  # TODO: understand setblocking
+  # client_socket.setblocking(False)
+
+  host_name = socket.gethostname()
+  client_addr = socket.gethostbyname(host_name)
+  logging.info("hostname: {}, addr: {}".format(host_name, client_addr))
+
+  initial_connection_payload: bytes = create_payload(
+    source=DUMMY_UUID,  # This should be optional, in case of initial connection ommited
+    destination=DUMMY_UUID,
+    destination_type=DestinationType.SERVER,
+    message="I'm a worker",
+    message_type=MessageType.INFO
+  )
+
+  logging.info("Sending initial payload: {}".format(initial_connection_payload))
+  client_socket.send(initial_connection_payload)
+  response = accept_initial_response(client_socket)
+  server_id = response["header"]["source"]
+  own_id = response["header"]["destination"][1:]
+  logging.info("Server id: {}, own id: {}".format(server_id, own_id))
+  while True:
+    message = input("Give me input ")
+    if message:
+      payload = create_payload(
+        source=own_id,
+        destination="d78cd1a6-3fb2-44aa-b222-ddb152412af0",
+        destination_type=DestinationType.CLIENT,
+        message=message,
+        message_type=MessageType.MESSAGE
+      )
+      logging.info("Sending message {}".format(payload))
+      client_socket.send(payload)
+    try:
+      header: bytes = client_socket.recv(HEADER_LENGTH)
+      if len(header) == 0:
+          logging.error("Connection closed by server")
+          sys.exit()
+      logging.debug("HEADER BYTES {}".format(header))
+      parsed_header = parse_header(header)
+      message: bytes = client_socket.recv(parsed_header["message_length"])
+      logging.info("MESSAGE: {}".format(message.decode('utf-8')))
+    except IOError as e:
+      # This is normal on non blocking connections - when there are no incoming data error is going to be raised
+      # Some operating systems will indicate that using AGAIN, and some using WOULDBLOCK error code
+      # We are going to check for both - if one of them - that's expected, means no incoming data, continue as normal
+      # If we got different error code - something happened
+      if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+          logging.error("Reading error: {}".format(e))
+          sys.exit()
+
+      # We just did not receive anything
+      continue
+    except Exception as e:
+      # Any other exception - something happened, exit
+      raise e
+      logging.error("RECEIVE ERROR: {}".format(e))
+      sys.exit()
 
 
 if __name__ == "__main__":
-  main()
+    main()

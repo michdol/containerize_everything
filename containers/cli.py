@@ -16,32 +16,6 @@ from custom_types.custom_types import WorkerHeader
 from payload_related import create_payload, parse_header
 
 
-def accept_initial_response(client_socket):
-  try:
-    header: bytes = client_socket.recv(HEADER_LENGTH)
-    if len(header) == 0:
-        logging.error("Connection closed by server")
-        sys.exit()
-    logging.debug("Initial header {}".format(header))
-    parsed_header = parse_header(header)
-    message: bytes = client_socket.recv(parsed_header["message_length"])
-    logging.info("MESSAGE: {}".format(message.decode('utf-8')))
-    return {"header": parsed_header, "message": message.decode('utf-8')}
-  except IOError as e:
-    # This is normal on non blocking connections - when there are no incoming data error is going to be raised
-    # Some operating systems will indicate that using AGAIN, and some using WOULDBLOCK error code
-    # We are going to check for both - if one of them - that's expected, means no incoming data, continue as normal
-    # If we got different error code - something happened
-    if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
-        logging.error("Reading error: {}".format(e))
-        sys.exit()
-  except Exception as e:
-    # Any other exception - something happened, exit
-    raise e
-    logging.error("RECEIVE ERROR: {}".format(e))
-    sys.exit()  
-
-
 def main():
   format_ = "%(asctime)s %(levelname)s: %(message)s"
   logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
@@ -56,6 +30,7 @@ def main():
   client_socket.connect(SERVER_ADDRESS)
 
   # Set connection to non-blocking state, so .recv() call won;t block, just return some exception we'll handle
+  # TODO: understand setblocking
   client_socket.setblocking(False)
 
   host_name = socket.gethostname()
@@ -72,10 +47,8 @@ def main():
 
   logging.info("Sending initial payload: {}".format(initial_connection_payload))
   client_socket.send(initial_connection_payload)
-  response = accept_initial_response(client_socket)
-  server_id = response["header"]["source"]
-  own_id = response["header"]["destination"][1:]
-  logging.info("Server id: {}, own id: {}".format(server_id, own_id))
+  server_id = None
+  own_id = None
   while True:
     try:
       header: bytes = client_socket.recv(HEADER_LENGTH)
@@ -84,6 +57,9 @@ def main():
           sys.exit()
       logging.debug("HEADER BYTES {}".format(header))
       parsed_header = parse_header(header)
+      if parsed_header["message_type"] == MessageType.INITIAL_CONNECTION:
+        server_id = parsed_header["source"]
+        own_id = parsed_header["destination"][1:]
       message: bytes = client_socket.recv(parsed_header["message_length"])
       logging.info("MESSAGE: {}".format(message.decode('utf-8')))
     except IOError as e:
