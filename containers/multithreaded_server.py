@@ -33,6 +33,7 @@ class Server(object):
 		self.socket.bind(self.address)
 		self.sockets: List[socket.socket] = [self.socket]
 
+		self.lock = threading.Lock()
 		self.master: Optional[Master] = None
 		self.clients: Dict[socket.socket, Connection] = {}
 		self.clients_index: Dict[uuid.UUID, socket.socket] = {}
@@ -46,15 +47,8 @@ class Server(object):
 		return not self.main_event.is_set()
 
 	def shutdown(self):
-		# TODO:
+		logging.info("Shutting down")
 		self.main_event.set()
-
-	def broadcast_subroutine(self):
-		logging.info("Starting broadcast subroutine")
-		while not self.event.is_set():
-			if not self.messages.empty():
-				self.dispatch(self.messages.get())
-		logging.info("Broadcast subroutine finished")
 
 	def serve_forever(self):
 		logging.info("Listening on {}:{}".format(*self.address))
@@ -79,17 +73,34 @@ class Server(object):
 					else:
 						self.handle_message(notified_socket)
 		finally:
-			for connection in self.sockets:
-				connection.close()
+			self.socket.shutdown(socket.SHUT_RDWR)
 			self.socket.close()
 			self.event.set()
-		logging.info("Exiting")
+			for connection in self.sockets:
+				connection.close()
+			logging.info("Exiting")
+
+	def broadcast_subroutine(self):
+		logging.info("Starting broadcast subroutine")
+		while not self.event.is_set():
+			if not self.messages.empty():
+				self.dispatch(self.messages.get())
+		logging.info("Broadcast subroutine finished")
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
 			request: Request = self.build_request(client_socket)
+			if not request:
+				return
 			logging.debug("Received {}".format(request))
-			client: Connection = self.authenticate(client_socket, address, request)
+			try:
+				logging.debug("Acquiring lock to authenticate the client")
+				self.lock.acquire()
+				logging.debug("Lock acquired")
+				client: Connection = self.authenticate(client_socket, address, request)
+			finally:
+				logging.debug("Releasing lock after authentication")
+				self.lock.release()
 			logging.info("{} connected".format(client))
 			response: bytes = create_payload(
 				source=self.id,
@@ -214,6 +225,7 @@ class Server(object):
 		try:
 			request: Request = self.build_request(client_socket)
 			if not request:
+				# TODO: remove client
 				return
 			# TODO: handle each type of client in separate thread?
 			if client_socket in self.workers:
@@ -244,8 +256,16 @@ class Server(object):
 		recipients = self.get_recipients(request.destination, request.destination_type)
 		payload = request.payload()
 		logging.info("Sending {} to {} clients".format(request, len(recipients)))
+		sent_count = 0
 		for client_socket in recipients:
-			client_socket.send(payload)
+			try:
+				client_socket.send(payload)
+				sent_count += 1
+			except Exception as e:
+				client = self.identify_client(client_socket)
+				logging.error("Failed to send {} to {}, error: {}".format(request, client, e))
+				self.remove_client(client)
+		logging.info("Successfully sent {} to {} clients".format(request, sent_count))
 
 	def get_recipients(self, destination: uuid.UUID, destination_type: DestinationType):
 		recipients = []
@@ -260,10 +280,38 @@ class Server(object):
 				recipients.append(self.clients_index[destination])
 		return recipients
 
+	def remove_client(self, client: Connection):
+		try:
+			logging.debug("{} Acquiring lock to remove client".format(client))
+			self.lock.acquire()
+			if isinstance(client, Client) or isinstance(client, Master):
+				del self.clients[client.socket]
+				del self.clients_index[client.id]
+			elif isinstance(client, Worker):
+				del self.workers[client.socket]
+			if self.master and client is self.master:
+				logging.info("{} Master has been removed".format(client))
+				self.master = None
+			self.sockets.remove(client.socket)
+		except Exception as e:
+			logging.error("{} Error while removing client {}".format(client, e))
+		finally:
+			logging.debug("{} Releasing lock after removal".format(client))
+			self.lock.release()
+
+	def identify_client(self, client_socket: socket.socket) -> Connection:
+		if client_socket in self.clients:
+			return self.clients[client_socket]
+		elif client_socket in self.workers:
+			return self.workers[client_socket]
+
 
 if __name__ == "__main__":
 	format_ = "%(asctime)s %(levelname)s: %(message)s"
 	logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
 
 	server = Server(*SERVER_ADDRESS)
-	server.serve_forever()
+	try:
+		server.serve_forever()
+	except KeyboardInterrupt:
+		server.shutdown()

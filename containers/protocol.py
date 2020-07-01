@@ -34,11 +34,8 @@ class Worker(Connection):
 
 
 class Request(object):
-	# TODO: type hints for message_type and message might be incorrent
-	# message_type: MessageType
-	# message: json, if exists
 	def __init__(self, raw_header: bytes, raw_message: bytes, source: uuid.UUID, destination: uuid.UUID,
-			destination_type: DestinationType, time_sent: int, message_type: int, message_length: int,
+			destination_type: DestinationType, time_sent: int, message_type: MessageType, message_length: int,
 			message: str
 		):
 		self.raw_header: bytes = raw_header
@@ -47,7 +44,7 @@ class Request(object):
 		self.destination: uuid.UUID = destination
 		self.destination_type: DestinationType = destination_type
 		self.time_sent: int = time_sent
-		self.message_type: int = message_type
+		self.message_type: MessageType = message_type
 		self.message_length: int = message_length
 		self.message: str = message
 

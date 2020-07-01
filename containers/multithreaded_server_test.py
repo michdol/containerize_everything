@@ -1,5 +1,7 @@
 import uuid
+import socket
 import threading
+import time
 
 from unittest import main, TestCase, mock
 
@@ -30,6 +32,19 @@ class ServerTest(TestCase):
 		self.server_thread.join()
 		assert not self.server_thread.is_alive(), "Server thread not shut down"
 		"""
+
+	def _artificial_lock(self, lock, test_name, timeout=1):
+		"""
+		Used to acquire lock for test.
+		Should be run in separate thread.
+		"""
+		try:
+			lock.acquire()
+			time.sleep(timeout)
+		except Exception as e:
+			print("Failed to acquire lock during test: {}".format(test_name))
+		finally:
+			lock.release()
 
 	def test_build_request(self):
 		source = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -178,3 +193,131 @@ class ServerTest(TestCase):
 		self.server.handle_new_connection(mock_socket, address)
 
 		mock_handler.assert_called_with(mock_socket, exception)
+
+	def test_get_recipients_destination_type_client(self):
+		mock_client_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+		mock_socket = mock.MagicMock()
+		self.server.clients_index[mock_client_id] = mock_socket
+
+		recipients = self.server.get_recipients(mock_client_id, DestinationType.CLIENT)
+		self.assertEqual(recipients, [mock_socket])
+
+		random_id = uuid.UUID("90000000-0000-0000-0000-000000000009")
+		recipients = self.server.get_recipients(random_id, DestinationType.CLIENT)
+		self.assertEqual(recipients, [])
+
+	def test_dispatch_single_client(self):
+		mock_client_1_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+		mock_client_1_socket = mock.MagicMock()
+		self.server.clients_index[mock_client_1_id] = mock_client_1_socket
+
+		source = uuid.UUID("00000000-0000-0000-0000-000000000000")
+		destination = mock_client_1_id
+		destination_type = DestinationType.CLIENT
+		time_sent = 1234567890
+		message_type = MessageType.MESSAGE
+		message = "Hello"
+		message_length = len(message)
+		header = f"{source}|{destination_type}|{destination}|{time_sent}|{message_type:02d}|{message_length:010d} "
+		request = Request(
+			raw_header=header.encode("utf-8"),
+			raw_message=message.encode("utf-8"),
+			source=source,
+			destination=destination,
+			destination_type=destination_type,
+			time_sent=time_sent,
+			message_type=message_type,
+			message_length=message_length,
+			message=message
+		)
+
+		self.server.dispatch(request)
+
+		mock_client_1_socket.send.assert_called_with(request.payload())
+
+	@mock.patch("multithreaded_server.Server.remove_client")
+	def test_dispatch_single_client_exception_while_sending(self, mock_remove_client):
+		mock_client_1_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+		mock_client_1_socket = mock.MagicMock()
+		exception = socket.error("Can't send message")
+		mock_client_1_socket.send.side_effect = exception
+		mock_connection = mock.MagicMock()
+		self.server.clients[mock_client_1_socket] = mock_connection
+		self.server.clients_index[mock_client_1_id] = mock_client_1_socket
+
+		source = uuid.UUID("00000000-0000-0000-0000-000000000000")
+		destination = mock_client_1_id
+		destination_type = DestinationType.CLIENT
+		time_sent = 1234567890
+		message_type = MessageType.MESSAGE
+		message = "Hello"
+		message_length = len(message)
+		header = f"{source}|{destination_type}|{destination}|{time_sent}|{message_type:02d}|{message_length:010d} "
+		request = Request(
+			raw_header=header.encode("utf-8"),
+			raw_message=message.encode("utf-8"),
+			source=source,
+			destination=destination,
+			destination_type=destination_type,
+			time_sent=time_sent,
+			message_type=message_type,
+			message_length=message_length,
+			message=message
+		)
+
+		self.server.dispatch(request)
+		mock_remove_client.assert_called_with(mock_connection)
+
+	def test_remove_client(self):
+		mock_client_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+		mock_client_socket = mock.MagicMock()
+		mock_address = ("100.1.100.1", 1234)
+		client = Client(mock_client_id, mock_client_socket, mock_address)
+		self.server.clients[mock_client_socket] = client
+		self.server.clients_index[mock_client_id] = mock_client_socket
+		self.server.sockets.append(mock_client_socket)
+
+		self.server.remove_client(client)
+
+		self.assertFalse(self.server.lock.locked())
+		self.assertNotIn(mock_client_socket, self.server.clients)
+		self.assertNotIn(mock_client_socket, self.server.sockets)
+		self.assertNotIn(mock_client_id, self.server.clients)
+
+	def test_remove_client_master(self):
+		mock_client_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+		mock_client_socket = mock.MagicMock()
+		mock_address = ("100.1.100.1", 1234)
+		client = Master(mock_client_id, mock_client_socket, mock_address)
+		self.server.master = client
+		self.server.clients[mock_client_socket] = client
+		self.server.clients_index[mock_client_id] = mock_client_socket
+		self.server.sockets.append(mock_client_socket)
+
+		self.server.remove_client(client)
+
+		self.assertFalse(self.server.lock.locked())
+		self.assertNotIn(mock_client_socket, self.server.clients)
+		self.assertNotIn(mock_client_socket, self.server.sockets)
+		self.assertNotIn(mock_client_id, self.server.clients)
+		self.assertIsNone(self.server.master)
+
+	def test_remove_client_locked(self):
+		mock_client_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+		mock_client_socket = mock.MagicMock()
+		mock_address = ("100.1.100.1", 1234)
+		client = Client(mock_client_id, mock_client_socket, mock_address)
+		self.server.clients[mock_client_socket] = client
+		self.server.clients_index[mock_client_id] = mock_client_socket
+		self.server.sockets.append(mock_client_socket)
+
+		thread_args = (self.server.lock, self.test_remove_client_locked.__name__)
+		artificial_lock_thread = threading.Thread(target=self._artificial_lock, args=thread_args)
+		artificial_lock_thread.start()
+		self.server.remove_client(client)
+		artificial_lock_thread.join()
+
+		self.assertFalse(self.server.lock.locked())
+		self.assertNotIn(mock_client_socket, self.server.clients)
+		self.assertNotIn(mock_client_socket, self.server.sockets)
+		self.assertNotIn(mock_client_id, self.server.clients)

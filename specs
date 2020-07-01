@@ -1,8 +1,14 @@
 01/07/2020 Unit tests
 
 1. Tests:
-		- authenticate
-		- handle_new_connection
+	- authenticate
+	- handle_new_connection
+	- dispatch
+	- remove_client
+2. Functionalities:
+	- dispach
+	- remove_client
+3. Added lock for synchronizing threads for adding and removing clients
 
 ---------------------------------------------------------------------------------
 
