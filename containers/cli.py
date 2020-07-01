@@ -42,7 +42,7 @@ def main():
     destination=DUMMY_UUID,
     destination_type=DestinationType.SERVER,
     message="I'm a client",
-    message_type=MessageType.INFO
+    message_type=MessageType.INITIAL_CONNECTION
   )
 
   logging.info("Sending initial payload: {}".format(initial_connection_payload))

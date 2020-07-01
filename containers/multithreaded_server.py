@@ -237,6 +237,7 @@ class Server(object):
 		logging.debug("{} Incomming new message {}".format(client, request))
 
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
+		# TODO: add tests aswell
 		pass
 
 	def dispatch(self, request: Request):
