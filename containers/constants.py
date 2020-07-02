@@ -1,3 +1,5 @@
+import uuid
+
 from enum import Enum, IntEnum
 
 from custom_types import Address
@@ -19,6 +21,8 @@ class MessageType(IntEnum):
 	INITIAL_CONNECTION = 0
 	INFO = 1
 	MESSAGE = 2
+	COMMAND = 3
+	JOB_RESULT = 4
 	ERROR = 9
 
 
@@ -28,9 +32,9 @@ class DestinationType(str, Enum):
 	GROUP = "g"
 
 
-class ClientGroup(Enum):
-	CLIENTS = "00000000-0000-0000-0000-00000000"
-	WORKERS = "00000000-0000-0000-0000-00000001"
+CLIENTS = uuid.UUID("00000000-0000-0000-0000-000000000000")
+WORKERS = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
 
 class ResponseStatus(IntEnum):
 	# Success
@@ -43,6 +47,6 @@ class ResponseStatus(IntEnum):
 
 class WorkerStatus(IntEnum):
 	NOT_CONNECTED = 0
-	CONNECTED = 1
+	IDLE = 1
 	WORKING = 2
 	ERROR = 9

@@ -3,5 +3,12 @@ from typing import Tuple
 
 
 Address = Tuple[str, int]
-WorkerHeader = namedtuple("WorkerHeader", ["message_type", "status", "time_sent", "message_length"])
-ServerHeader = namedtuple("ServerHeader", ["message_type", "status", "time_sent", "message_length"])
+Message = namedtuple("Message", [
+	"source",
+	"destination",
+	"destination_type",
+	"time_sent",
+	"message_type",
+	"message_length",
+	"message"
+])

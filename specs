@@ -11,6 +11,14 @@ Worker:
 
 Master:
 - send commands to server
+2. Created Client
+- temporarily sending test start work command
+3. Created Worker
+- added starting/stopping job and sending results
+
+TODO:
+- check shutting down threads
+- unify messages/requests sent over channels
 
 ---------------------------------------------------------------------------------
 

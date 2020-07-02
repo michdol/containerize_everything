@@ -10,13 +10,15 @@ import queue
 from typing import Dict, List, Tuple, Optional
 
 from constants import (
+	CLIENTS,
+	WORKERS,
 	HEADER_LENGTH,
 	DUMMY_UUID,
 	SERVER_ADDRESS,
 	MessageType,
 	DestinationType,
 )
-from custom_types.custom_types import Address, WorkerHeader
+from custom_types.custom_types import Address
 from errors import (
 	AuthenticationError,
 	MasterAlreadyConnectedError,
@@ -243,9 +245,11 @@ class Server(object):
 
 	def handle_client_request(self, client: Client, request: Request):
 		logging.debug("{} Incomming new message {}".format(client, request))
+		self.messages.put(request)
 
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
 		# TODO: add tests aswell
+		# send error response to client
 		pass
 
 	def dispatch(self, request: Request):
@@ -263,11 +267,14 @@ class Server(object):
 				self.remove_client(client)
 		logging.info("Successfully sent {} to {} clients".format(request, sent_count))
 
-	def get_recipients(self, destination: uuid.UUID, destination_type: DestinationType):
+	def get_recipients(self, destination: uuid.UUID, destination_type: DestinationType) -> List[socket.socket]:
 		recipients = []
 		if destination_type == DestinationType.GROUP:
-			# Get recipients from a group
-			pass
+			# TODO: add determining group
+			if destination == CLIENTS:
+				recipients = list(self.clients.keys())
+			elif destination == WORKERS:
+				recipients = list(self.workers.keys())
 		elif destination_type == DestinationType.SERVER:
 			# Do nothing for now
 			pass

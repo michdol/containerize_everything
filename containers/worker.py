@@ -1,4 +1,5 @@
 import errno
+import json
 import logging
 import socket
 import sys
@@ -9,14 +10,22 @@ import time
 
 from typing import Optional, Tuple, Dict
 
-from constants import HEADER_LENGTH, SERVER_ADDRESS, DUMMY_UUID, DestinationType
-from custom_types import Address
+from constants import (
+	CLIENTS,
+	WORKERS,
+	HEADER_LENGTH,
+	SERVER_ADDRESS,
+	DUMMY_UUID,
+	DestinationType
+)
+from custom_types.custom_types import Address, Message
 from constants import MessageType, WorkerStatus
 from protocol import create_payload, parse_header
+from test_job import JobCounter
 
 
 class ClientBase(object):
-	def __init__(self, server_address: Address):
+	def __init__(self, server_address: Address, client_type: str):
 		self.id: uuid.UUID = uuid.UUID(DUMMY_UUID)
 		self.server_id: Optional[uuid.UUID] = None
 		self.server_address: Address = server_address
@@ -27,6 +36,8 @@ class ClientBase(object):
 		self.main_event = threading.Event()
 		self.receive_message_thread = threading.Thread(target=self.receive_message, daemon=True)
 		self.send_message_thread = threading.Thread(target=self.send_message, daemon=True)
+		# TODO: something better than self.client_type
+		self.client_type = client_type
 
 	def run(self):
 		try:
@@ -36,14 +47,14 @@ class ClientBase(object):
 			self.receive_message_thread.start()
 			self.send_message_thread.start()
 
-			self.connect_to_server()
+			self.send_initial_request()
 			while self.is_running():
 				# Parse messages if any exist
 				# Run jobs
 				# Send messages back
-				logging.debug("Entered loop")
 				self.main_loop()
 		except Exception as e:
+			raise e
 			logging.error("Exception occurred: {}".format(e))
 		finally:
 			self.socket.close()
@@ -56,12 +67,12 @@ class ClientBase(object):
 	def shutdown(self):
 		self.main_event.set()
 
-	def connect_to_server(self):
+	def send_initial_request(self):
 		initial_connection_payload: bytes = create_payload(
 			source=DUMMY_UUID,  # This should be optional, in case of initial connection ommited
 			destination=DUMMY_UUID,
 			destination_type=DestinationType.SERVER,
-			message="I'm a worker",
+			message="I'm a {}".format(self.client_type),
 			message_type=MessageType.INITIAL_CONNECTION
 		)
 		logging.info("Sending initial payload: {!r}".format(initial_connection_payload))
@@ -71,12 +82,12 @@ class ClientBase(object):
 
 		while not self.is_connected:
 			if not self.inbox.empty():
-				header, message = self.inbox.get()
-				if message != "connected, ok":
-					logging.error("Failed to connect with server:\nheader: {}\nmessage: {}".format(header, message))
+				message = self.inbox.get()
+				if message.message != "connected, ok":
+					logging.error("Failed to connect with server:\nmessage: {}".format(message.message))
 					sys.exit()
-				self.server_id = header["source"]
-				self.id = header["destination"]
+				self.server_id = message.source
+				self.id = message.destination
 				self.is_connected = True
 				logging.info("Successfully connected to {}:{}".format(*self.server_address))
 			time.sleep(1)
@@ -88,10 +99,19 @@ class ClientBase(object):
 				if len(header) == 0:
 					logging.error("Server has closed the connection")
 					sys.exit()
+					return
 				parsed_header = parse_header(header)
 				message: bytes = self.socket.recv(parsed_header["message_length"])
 				# TODO: this might be better as a Request
-				incomming_message = (parsed_header, message.decode("utf-8"))
+				incomming_message = Message(
+					parsed_header["source"],
+					parsed_header["destination"],
+					parsed_header["destination_type"],
+					parsed_header["time_sent"],
+					parsed_header["message_type"],
+					parsed_header["message_length"],
+					message.decode("utf-8")
+				)
 				logging.info("Received {}".format(incomming_message))
 				self.inbox.put(incomming_message)
 			except IOError as e:
@@ -133,24 +153,90 @@ class ClientBase(object):
 
 
 class Client(ClientBase):
+	def __init__(self, server_address: Address, client_type):
+		super().__init__(server_address, client_type)
+		self.sent = False
+
 	def main_loop(self):
 		if not self.inbox.empty():
 			message: Tuple[Dict, str] = self.inbox.get()
 			logging.info("Read message {}".format(message[1]))
-		message = input("Give me input\n")
-		if message:
+		# message = input("Give me input\n")
+		# if message:
+		# 	self.outbox.put({
+		# 		"destination": self.server_id,
+		# 		"destination_type": DestinationType.GROUP,
+		# 		"message": message,
+		# 		"message_type": MessageType.COMMAND
+		# 	})
+		if not self.sent:
 			self.outbox.put({
-				"destination": self.server_id,
-				"destination_type": DestinationType.SERVER,
-				"message": message,
-				"message_type": MessageType.MESSAGE
+				"destination": WORKERS,
+				"destination_type": DestinationType.GROUP,
+				"message": "start work: job_counter",
+				"message_type": MessageType.COMMAND
 			})
+			self.sent = True
 
+
+class Worker(ClientBase):
+	def __init__(self, server_address: Address, client_type: str):
+		super().__init__(server_address, client_type)
+		self.job_results: queue.Qeueue = queue.Queue()
+		self.job_event = threading.Event()
+		self.job_thread = None
+
+	def main_loop(self):
+		"""
+		1. Main thread
+			 - await commands and act accordingly
+			 - start / stop jobs
+		2. Info thread
+			 - every X seconds send MessageType.INFO
+		3. Job thread
+			 - execute work
+			 - send results
+		"""
+		if not self.inbox.empty():
+			message: Message = self.inbox.get()
+			logging.info("Read message {}".format(message.message_type))
+			if message.message_type == MessageType.COMMAND:
+				self.process_command(message)
+		if not self.job_results.empty():
+			result = self.job_results.get()
+			self.outbox.put({
+				"destination": CLIENTS,
+				"destination_type": DestinationType.GROUP,
+				"message": json.dumps(result),
+				"message_type": MessageType.JOB_RESULT,
+			})
+		if self.job_thread and self.job_thread.done:
+			logging.info("Work finished")
+			self.outbox.put({
+				"destination": CLIENTS,
+				"destination_type": DestinationType.GROUP,
+				"message": "job done",
+				"message_type": MessageType.JOB_RESULT,
+			})
+			self.job_thread = None
+			self.job_event.clear()
+
+	def process_command(self, message: Message):
+		logging.info("Received command {}".format(message.message))
+		if message.message == "start work: job_counter" and not self.job_thread:
+			self.job_thread = JobCounter(self.job_results, self.job_event, daemon=True)
+			self.job_thread.start()
+		elif message.message == "stop work":
+			self.job_event.set()
 
 
 if __name__ == "__main__":
 	format_ = "%(asctime)s %(levelname)s: %(message)s"
 	logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
 
-	client = Client(SERVER_ADDRESS)
+	print(sys.argv)
+	if sys.argv[1] == "client":
+		client = Client(SERVER_ADDRESS, "client")
+	else:
+		client = Worker(SERVER_ADDRESS, "worker")
 	client.run()
