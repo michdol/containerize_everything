@@ -59,12 +59,6 @@ class Server(object):
 		try:
 			logging.debug("Main thread continues")
 			while self.is_running():
-				# TODO:
-				# - implement simple client/worker scripts
-				# - implement basic main functionalities
-				# - continue
-
-				# - implement authentication logic
 				read, _, exception = select.select(self.sockets, [], self.sockets)
 				for notified_socket in read:
 					if notified_socket is self.socket:
@@ -224,28 +218,30 @@ class Server(object):
 	def handle_message(self, client_socket: socket.socket):
 		try:
 			request: Request = self.build_request(client_socket)
+			client = self.identify_client(client_socket)
 			if not request:
-				# TODO: remove client
+				logging.info("{} closed connection, removing".format(client))
+				self.remove_client(client)
 				return
 			# TODO: handle each type of client in separate thread?
-			if client_socket in self.workers:
-				self.handle_worker_request(self.workers[client_socket], request)
-			elif client_socket is self.master:
-				self.handle_master_request()
+			if isinstance(client, Worker):
+				self.handle_worker_request(client, request)
+			elif client is self.master:
+				self.handle_master_request(request)
 			else:
-				self.handle_client_request(self.clients[client_socket])
+				self.handle_client_request(client, request)
 		except Exception as e:
-			logging.error("Exception while handling new connection {}".format(e))
+			logging.error("Exception while handling message {}".format(e))
 			self.handle_exception(client_socket, e)
 
 	def handle_worker_request(self, worker: Worker, request: Request):
 		logging.debug("{} Incomming new message {}".format(worker, request))
 		self.messages.put(request)
 
-	def handle_master_request(self):
+	def handle_master_request(self, request: Request):
 		logging.debug("{} Incomming new message {}".format(master, request))
 
-	def handle_client_request(self, client: Client):
+	def handle_client_request(self, client: Client, request: Request):
 		logging.debug("{} Incomming new message {}".format(client, request))
 
 	def handle_exception(self, client_socket: socket.socket, error: Exception):

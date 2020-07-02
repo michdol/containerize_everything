@@ -52,10 +52,12 @@ def main():
   own_id = None
   while True:
     try:
+      print("here")
       header: bytes = client_socket.recv(HEADER_LENGTH)
       if len(header) == 0:
           logging.error("Connection closed by server")
           sys.exit()
+      print('there')
       logging.debug("HEADER BYTES {}".format(header))
       parsed_header = parse_header(header)
       if parsed_header["message_type"] == MessageType.INITIAL_CONNECTION:

@@ -1,3 +1,19 @@
+02/07/2020 Client base
+
+1. Created ClientBase
+Base class for all clients (Client/Worker/Master)
+Common features:
+- receive / send messages - threads waiting for incomming / outgoing messages
+
+Worker:
+- Run up to 1 job on separate thread
+- On receive message, parse command and act accordingly
+
+Master:
+- send commands to server
+
+---------------------------------------------------------------------------------
+
 01/07/2020 Unit tests
 
 1. Tests:
