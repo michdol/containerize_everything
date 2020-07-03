@@ -31,9 +31,21 @@ services:
         context: ./
         dockerfile: ./docker_files/worker
       ports:
-        - "8004:8000"
+        - "8005:8000"
       volumes:
         - ./:/var/worker
+      depends_on:
+        - server
+
+    react_client:
+      build:
+        context: ./
+        dockerfile: ./docker_files/react_client_compose
+      ports:
+        - "3000:3000"
+        - "2203:22"
+      volumes:
+        - ./react_client:/var/react_client
       depends_on:
         - server
 
@@ -41,3 +53,4 @@ volumes:
   worker:
   client:
   server:
+  react_client:

@@ -2,10 +2,13 @@ import socket
 import time
 import uuid
 
-from typing import Dict
+from typing import Dict, Tuple
 
-from constants import HEADER_LENGTH, DestinationType, MessageType
-from custom_types import Address
+from constants import DestinationType, MessageType
+from settings import HEADER_LENGTH
+
+
+Address = Tuple[str, int]
 
 
 class Connection(object):
@@ -55,7 +58,7 @@ class Request(object):
 		return self.raw_header + self.raw_message
 
 
-def create_payload(source: uuid.UUID, destination: str, destination_type: DestinationType, message: str,
+def create_payload(source: uuid.UUID, destination: uuid.UUID, destination_type: DestinationType, message: str,
 		message_type: MessageType) -> bytes:
 	message_length = len(message)
 	now = int(time.time())

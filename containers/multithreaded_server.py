@@ -10,25 +10,26 @@ import queue
 from typing import Dict, List, Tuple, Optional
 
 from constants import (
+	MessageType,
+	DestinationType,
+)
+from errors import (
+	AuthenticationError,
+	MasterAlreadyConnectedError,
+)
+from protocol import Address, Request, Connection, Client, Worker, Master, create_payload
+from settings import (
 	CLIENTS,
 	WORKERS,
 	HEADER_LENGTH,
 	DUMMY_UUID,
 	SERVER_ADDRESS,
-	MessageType,
-	DestinationType,
 )
-from custom_types.custom_types import Address
-from errors import (
-	AuthenticationError,
-	MasterAlreadyConnectedError,
-)
-from protocol import Request, Connection, Client, Worker, Master, create_payload
 
 
 class Server(object):
 	def __init__(self, host: str, port: int):
-		self.id = uuid.uuid4()
+		self.id: uuid.UUID = uuid.uuid4()
 		self.address: Address = (host, port)
 		self.socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -85,7 +86,7 @@ class Server(object):
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
-			request: Request = self.build_request(client_socket)
+			request: Optional[Request] = self.build_request(client_socket)
 			if not request:
 				return
 			logging.debug("Received {}".format(request))
@@ -105,13 +106,13 @@ class Server(object):
 				message="connected, ok",
 				message_type=MessageType.INITIAL_CONNECTION
 			)
-			logging.info("{} sending response {}".format(client, response))
+			logging.info("{} sending response {!r}".format(client, response))
 			client.socket.send(response)
 		except Exception as e:
 			logging.error("Exception while handling new connection {}".format(e))
 			self.handle_exception(client_socket, e)
 
-	def build_request(self, client_socket: socket.socket) -> Request:
+	def build_request(self, client_socket: socket.socket) -> Optional[Request]:
 		"""
 		Retrieves and build request from client.
 		Retrieval takes place in two stages.
@@ -149,8 +150,8 @@ class Server(object):
 		try:
 			header: bytes = client_socket.recv(HEADER_LENGTH)
 			if len(header) == 0:
-				return
-			logging.debug("Received header: {}".format(header))
+				return None
+			logging.debug("Received header: {!r}".format(header))
 			values = [value for value in header.decode("utf-8").split("|")]
 			message_length = int(values[5])
 			message: bytes = client_socket.recv(message_length)
@@ -219,7 +220,7 @@ class Server(object):
 
 	def handle_message(self, client_socket: socket.socket):
 		try:
-			request: Request = self.build_request(client_socket)
+			request: Optional[Request] = self.build_request(client_socket)
 			client = self.identify_client(client_socket)
 			if not request:
 				logging.info("{} closed connection, removing".format(client))
@@ -230,21 +231,23 @@ class Server(object):
 				self.handle_worker_request(client, request)
 			elif client is self.master:
 				self.handle_master_request(request)
-			else:
+			elif isinstance(client, Client):
 				self.handle_client_request(client, request)
+			else:
+				logging.error("{} Unknown client: {}".format(request, client))
 		except Exception as e:
 			logging.error("Exception while handling message {}".format(e))
 			self.handle_exception(client_socket, e)
 
 	def handle_worker_request(self, worker: Worker, request: Request):
-		logging.debug("{} Incomming new message {}".format(worker, request))
+		logging.info("{} Incomming new message {}".format(worker, request))
 		self.messages.put(request)
 
 	def handle_master_request(self, request: Request):
-		logging.debug("{} Incomming new message {}".format(master, request))
+		logging.info("{} Incomming new message {}".format(self.master, request))
 
 	def handle_client_request(self, client: Client, request: Request):
-		logging.debug("{} Incomming new message {}".format(client, request))
+		logging.info("{} Incomming new message {}".format(client, request))
 		self.messages.put(request)
 
 	def handle_exception(self, client_socket: socket.socket, error: Exception):
@@ -270,7 +273,6 @@ class Server(object):
 	def get_recipients(self, destination: uuid.UUID, destination_type: DestinationType) -> List[socket.socket]:
 		recipients = []
 		if destination_type == DestinationType.GROUP:
-			# TODO: add determining group
 			if destination == CLIENTS:
 				recipients = list(self.clients.keys())
 			elif destination == WORKERS:

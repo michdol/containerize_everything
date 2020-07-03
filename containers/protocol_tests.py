@@ -2,8 +2,9 @@ import uuid
 
 from unittest import main, TestCase, mock
 
-from constants import DestinationType, MessageType, HEADER_LENGTH
+from constants import DestinationType, MessageType
 from protocol import Request, create_payload, parse_header
+from settings import HEADER_LENGTH
 
 
 class RequestTest(TestCase):

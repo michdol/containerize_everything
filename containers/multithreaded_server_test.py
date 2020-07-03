@@ -7,7 +7,7 @@ from unittest import main, TestCase, mock
 
 import settings
 
-from constants import DestinationType, MessageType, HEADER_LENGTH, SERVER_TEST_ADDRESS, DUMMY_UUID
+from constants import DestinationType, MessageType
 from errors import MasterAlreadyConnectedError, AuthenticationError
 from protocol import Request, create_payload, parse_header, Client, Worker, Master
 from multithreaded_server import Server
@@ -149,8 +149,8 @@ class ServerTest(TestCase):
 	@mock.patch("protocol.time.time")
 	@mock.patch("multithreaded_server.uuid.uuid4")
 	def test_handle_new_connection(self, mock_uuid, mock_time):
-		source = DUMMY_UUID
-		destination = DUMMY_UUID
+		source = settings.DUMMY_UUID
+		destination = settings.DUMMY_UUID
 		destination_type = DestinationType.SERVER
 		time_sent = 1234567890
 		message_type = MessageType.INITIAL_CONNECTION

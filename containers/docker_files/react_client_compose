@@ -1,0 +1,20 @@
+FROM ubuntu:16.04
+
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    sudo \
+    vim \
+    npm \
+    git
+
+COPY certificates/dev-certificate.pub /authorized_keys
+RUN mkdir -p ~root/.ssh /var/run/sshd \
+	&& chmod 700 ~root/.ssh \
+	&& mv /authorized_keys ~root/.ssh/authorized_keys \
+	&& chmod 600 ~root/.ssh/authorized_keys
+
+COPY / /var/react_client/
+WORKDIR /var/react_client
+
+EXPOSE 3000 22
+CMD ["/usr/sbin/sshd", "-D"]

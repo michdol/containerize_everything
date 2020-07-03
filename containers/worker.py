@@ -10,29 +10,28 @@ import time
 
 from typing import Optional, Tuple, Dict
 
-from constants import (
+from constants import DestinationType
+from constants import MessageType, WorkerStatus
+from protocol import Address, Request, create_payload, parse_header
+from settings import (
 	CLIENTS,
 	WORKERS,
 	HEADER_LENGTH,
 	SERVER_ADDRESS,
 	DUMMY_UUID,
-	DestinationType
 )
-from custom_types.custom_types import Address, Message
-from constants import MessageType, WorkerStatus
-from protocol import create_payload, parse_header
 from test_job import JobCounter
 
 
 class ClientBase(object):
-	def __init__(self, server_address: Address, client_type: str):
+	def __init__(self, server_address: Address, client_type: str=""):
 		self.id: uuid.UUID = uuid.UUID(DUMMY_UUID)
 		self.server_id: Optional[uuid.UUID] = None
 		self.server_address: Address = server_address
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.is_connected: bool = False
 		self.inbox: queue.Queue = queue.Queue()
-		self.outbox: queue.Qeueu = queue.Queue()
+		self.outbox: queue.Queue = queue.Queue()
 		self.main_event = threading.Event()
 		self.receive_message_thread = threading.Thread(target=self.receive_message, daemon=True)
 		self.send_message_thread = threading.Thread(target=self.send_message, daemon=True)
@@ -103,14 +102,16 @@ class ClientBase(object):
 				parsed_header = parse_header(header)
 				message: bytes = self.socket.recv(parsed_header["message_length"])
 				# TODO: this might be better as a Request
-				incomming_message = Message(
-					parsed_header["source"],
-					parsed_header["destination"],
-					parsed_header["destination_type"],
-					parsed_header["time_sent"],
-					parsed_header["message_type"],
-					parsed_header["message_length"],
-					message.decode("utf-8")
+				incomming_message = Request(
+					raw_header=header,
+					raw_message=message,
+					source=parsed_header["source"],
+					destination=parsed_header["destination"],
+					destination_type=parsed_header["destination_type"],
+					time_sent=parsed_header["time_sent"],
+					message_type=parsed_header["message_type"],
+					message_length=parsed_header["message_length"],
+					message=message.decode("utf-8")  # TODO: should this be json.loads(message)
 				)
 				logging.info("Received {}".format(incomming_message))
 				self.inbox.put(incomming_message)
@@ -159,16 +160,8 @@ class Client(ClientBase):
 
 	def main_loop(self):
 		if not self.inbox.empty():
-			message: Tuple[Dict, str] = self.inbox.get()
-			logging.info("Read message {}".format(message[1]))
-		# message = input("Give me input\n")
-		# if message:
-		# 	self.outbox.put({
-		# 		"destination": self.server_id,
-		# 		"destination_type": DestinationType.GROUP,
-		# 		"message": message,
-		# 		"message_type": MessageType.COMMAND
-		# 	})
+			message: Request = self.inbox.get()
+			logging.info("Read message {}: {}".format(message, message.message))
 		if not self.sent:
 			self.outbox.put({
 				"destination": WORKERS,
@@ -182,9 +175,9 @@ class Client(ClientBase):
 class Worker(ClientBase):
 	def __init__(self, server_address: Address, client_type: str):
 		super().__init__(server_address, client_type)
-		self.job_results: queue.Qeueue = queue.Queue()
+		self.job_results: queue.Queue = queue.Queue()
 		self.job_event = threading.Event()
-		self.job_thread = None
+		self.job_thread: Optional[threading.Thread] = None
 
 	def main_loop(self):
 		"""
@@ -198,8 +191,8 @@ class Worker(ClientBase):
 			 - send results
 		"""
 		if not self.inbox.empty():
-			message: Message = self.inbox.get()
-			logging.info("Read message {}".format(message.message_type))
+			message: Request = self.inbox.get()
+			logging.info("Read message {}".format(message))
 			if message.message_type == MessageType.COMMAND:
 				self.process_command(message)
 		if not self.job_results.empty():
@@ -221,7 +214,7 @@ class Worker(ClientBase):
 			self.job_thread = None
 			self.job_event.clear()
 
-	def process_command(self, message: Message):
+	def process_command(self, message: Request):
 		logging.info("Received command {}".format(message.message))
 		if message.message == "start work: job_counter" and not self.job_thread:
 			self.job_thread = JobCounter(self.job_results, self.job_event, daemon=True)
@@ -235,6 +228,7 @@ if __name__ == "__main__":
 	logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
 
 	print(sys.argv)
+	client: Optional[ClientBase] = None
 	if sys.argv[1] == "client":
 		client = Client(SERVER_ADDRESS, "client")
 	else:
