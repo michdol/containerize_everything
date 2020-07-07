@@ -1,3 +1,17 @@
+07/07/2020 Websocket protocol
+
+1. Basic implementation of server-side handshake and receiving message functionality
+
+---------------------------------------------------------------------------------
+
+03/07/2020 Adapt to browsers
+
+Objective:
+Develop mechanism to determine incoming message's protocol
+Switch? to custom protocol after accepting connection
+
+---------------------------------------------------------------------------------
+
 02/07/2020 Client base
 
 1. Created ClientBase

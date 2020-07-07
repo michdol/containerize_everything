@@ -4,6 +4,7 @@ import select
 import socket
 import sys
 import threading
+import time
 import uuid
 import queue
 
@@ -17,7 +18,20 @@ from errors import (
 	AuthenticationError,
 	MasterAlreadyConnectedError,
 )
-from protocol import Address, Request, Connection, Client, Worker, Master, create_payload
+from protocol import (
+	Address,
+	Request,
+	Connection,
+	Client,
+	Worker,
+	Master,
+	create_payload,
+	receive_message,
+	parse_handshake,
+	generate_hash,
+	create_handshake_response,
+	decode_message,
+)
 from settings import (
 	CLIENTS,
 	WORKERS,
@@ -53,6 +67,13 @@ class Server(object):
 		logging.info("Shutting down")
 		self.main_event.set()
 
+	def broadcast_subroutine(self):
+		logging.info("Starting broadcast subroutine")
+		while not self.event.is_set():
+			if not self.messages.empty():
+				self.dispatch(self.messages.get())
+		logging.info("Broadcast subroutine finished")
+
 	def serve_forever(self):
 		logging.info("Listening on {}:{}".format(*self.address))
 		self.socket.listen()
@@ -77,14 +98,74 @@ class Server(object):
 				connection.close()
 			logging.info("Exiting")
 
-	def broadcast_subroutine(self):
-		logging.info("Starting broadcast subroutine")
-		while not self.event.is_set():
-			if not self.messages.empty():
-				self.dispatch(self.messages.get())
-		logging.info("Broadcast subroutine finished")
-
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
+		try:
+			message = receive_message(client_socket)
+			headers = parse_handshake(message.decode("utf-8"))
+			hash_ = generate_hash(headers["Sec-WebSocket-Key"])
+			response = create_handshake_response(hash_)
+			sent = client_socket.send(response)
+			logging.info("Handshake complete, response sent {} bytes, total: {}".format(sent, len(response)))
+			# TODO: this might should go with lock?
+			# TODO2: wait for second request with credentials and complete authentication here
+			self.clients[client_socket] = None
+			self.sockets.append(client_socket)
+		except Exception as e:
+			logging.error("Exception handling new connection: {}".format(e))
+
+	def handle_message(self, client_socket: socket.socket):
+		"""
+		https://tools.ietf.org/html/rfc6455#section-5.1
+
+		The server MUST close the connection upon receiving a
+		frame that is not masked.  In this case, a server MAY send a Close
+		frame with a status code of 1002 (protocol error) as defined in
+		Section 7.4.1.
+		A server MUST NOT mask any frames that it sends to
+		the client.
+			A client MUST close a connection if it detects a masked
+		frame.  In this case, it MAY use the status code 1002 (protocol
+		error) as defined in Section 7.4.1.  (These rules might be relaxed in
+		a future specification.)
+		"""
+		try:
+			message: bytes = receive_message(client_socket)
+			decoded_message = decode_message(message)
+		# TODO: create custom errors corresponding to websocket protocol cases
+		# ex.: message not masked error
+		except Exception as e:
+			logging.error("Exception handling message: {}".format(e))
+
+	### To be deprecated ###
+
+	def custom_protocol_handle_message(self, client_socket: socket.socket):
+		"""
+		To be deprecated
+		"""
+		try:
+			request: Optional[Request] = self.build_request(client_socket)
+			client = self.identify_client(client_socket)
+			if not request:
+				logging.info("{} closed connection, removing".format(client))
+				self.remove_client(client)
+				return
+			# TODO: handle each type of client in separate thread?
+			if isinstance(client, Worker):
+				self.handle_worker_request(client, request)
+			elif client is self.master:
+				self.handle_master_request(request)
+			elif isinstance(client, Client):
+				self.handle_client_request(client, request)
+			else:
+				logging.error("{} Unknown client: {}".format(request, client))
+		except Exception as e:
+			logging.error("Exception while handling message {}".format(e))
+			self.handle_exception(client_socket, e)
+
+	def custom_protocol_handle_new_connection(self, client_socket: socket.socket, address: Address):
+		"""
+		To be deprecated
+		"""
 		try:
 			request: Optional[Request] = self.build_request(client_socket)
 			if not request:
@@ -121,7 +202,7 @@ class Server(object):
 						 in the header.
 
 		Example request:
-		0				 1															 2					 3							4
+		0				 1																2						3							 4
 		{source}|{destination_type}|{destination}|{time_sent}|{message_type}|{message_length} {message}
 
 		source - uuid.UUID (32 characters)
@@ -217,27 +298,6 @@ class Server(object):
 		self.sockets.append(client_socket)
 		logging.info("{} authenticated".format(client))
 		return client
-
-	def handle_message(self, client_socket: socket.socket):
-		try:
-			request: Optional[Request] = self.build_request(client_socket)
-			client = self.identify_client(client_socket)
-			if not request:
-				logging.info("{} closed connection, removing".format(client))
-				self.remove_client(client)
-				return
-			# TODO: handle each type of client in separate thread?
-			if isinstance(client, Worker):
-				self.handle_worker_request(client, request)
-			elif client is self.master:
-				self.handle_master_request(request)
-			elif isinstance(client, Client):
-				self.handle_client_request(client, request)
-			else:
-				logging.error("{} Unknown client: {}".format(request, client))
-		except Exception as e:
-			logging.error("Exception while handling message {}".format(e))
-			self.handle_exception(client_socket, e)
 
 	def handle_worker_request(self, worker: Worker, request: Request):
 		logging.info("{} Incomming new message {}".format(worker, request))
