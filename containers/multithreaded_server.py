@@ -26,11 +26,9 @@ from protocol import (
 	Worker,
 	Master,
 	create_payload,
-	receive_message,
-	parse_handshake,
-	generate_hash,
-	create_handshake_response,
-	decode_message,
+)
+from websocket_protocol import (
+	WebSocket,
 )
 from settings import (
 	CLIENTS,
@@ -87,6 +85,7 @@ class Server(object):
 				for notified_socket in read:
 					if notified_socket is self.socket:
 						client_socket, address = self.socket.accept()
+						client_socket.setblocking(0)
 						self.handle_new_connection(client_socket, address)
 					else:
 						self.handle_message(notified_socket)
@@ -100,15 +99,11 @@ class Server(object):
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
-			message = receive_message(client_socket)
-			headers = parse_handshake(message.decode("utf-8"))
-			hash_ = generate_hash(headers["Sec-WebSocket-Key"])
-			response = create_handshake_response(hash_)
-			sent = client_socket.send(response)
-			logging.info("Handshake complete, response sent {} bytes, total: {}".format(sent, len(response)))
+			client = WebSocket(client_socket, address)
+			client.handle_data()
+			logging.info("{} Handshake complete".format(client))
 			# TODO: this might should go with lock?
-			# TODO2: wait for second request with credentials and complete authentication here
-			self.clients[client_socket] = None
+			self.clients[client_socket] = client
 			self.sockets.append(client_socket)
 		except Exception as e:
 			logging.error("Exception handling new connection: {}".format(e))
@@ -129,12 +124,18 @@ class Server(object):
 		a future specification.)
 		"""
 		try:
-			message: bytes = receive_message(client_socket)
-			decoded_message = decode_message(message)
+			client = self.clients[client_socket]
+			client.handle_data()
+			frame = client.create_frame("Ok from server".encode("utf-8"), mask=False)
+			logging.debug("Sending response {}".format(frame))
+			client.send_buffer(frame)
 		# TODO: create custom errors corresponding to websocket protocol cases
 		# ex.: message not masked error
 		except Exception as e:
-			logging.error("Exception handling message: {}".format(e))
+			self.sockets.remove(client_socket)
+			del self.clients[client_socket]
+			logging.error("{} Exception handling message: {}".format(client, e))
+			self.handle_exception(client_socket, e)
 
 	### To be deprecated ###
 

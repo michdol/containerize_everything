@@ -1,3 +1,26 @@
+14/07/2020 Websocket protocol
+
+1. Created:
+- parsing websocket message
+- handshake
+- framing
+2. Refactored server to use websocket protocol
+
+---------------------------------------------------------------------------------
+
+14/07/2020 Websocket protocol
+
+1. Fixed bug causing clients to improperly parse messages from server
+
+Handle client message:
+after handshake
+receive 2 bytes and according to second byte either receive 1, 2 more bytes signifying payload length
+or:
+receive payload
+for now only text messages will be processed
+
+---------------------------------------------------------------------------------
+
 07/07/2020 Websocket protocol
 
 1. Basic implementation of server-side handshake and receiving message functionality

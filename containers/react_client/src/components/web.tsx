@@ -9,7 +9,6 @@ export default class WebsocketClient extends React.Component {
 	componentDidMount() {
 		client.onopen = () => {
 			console.log('Websocket client connected');
-			client.send(JSON.stringify({"username": "react client"}));
 		};
 		client.onmessage = (message) => {
 			console.log("do I even")
@@ -17,10 +16,16 @@ export default class WebsocketClient extends React.Component {
 		}
 	}
 
+	connect() {
+		console.log("sending");
+		client.send(JSON.stringify({"username": "react client"}));
+	}
+
 	render() {
 		return (
 			<div>
 				Dupa
+				<a onClick={this.connect}>send</a>
 			</div>
 		)
 	}

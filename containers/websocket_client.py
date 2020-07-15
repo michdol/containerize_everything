@@ -6,10 +6,10 @@ except ImportError:
 import time
 
 def on_message(ws, message):
-    print(message)
+    print("\n\nMESSAGE\n", message)
 
 def on_error(ws, error):
-    print(error)
+    print("Error came up", error)
 
 def on_close(ws):
     print("### closed ###")
@@ -28,8 +28,9 @@ def on_open(ws):
 if __name__ == "__main__":
     websocket.enableTrace(True)
     ws = websocket.WebSocketApp("ws://server:8000",
-                              on_message = on_message,
-                              on_error = on_error,
-                              on_close = on_close)
+                              on_message=on_message,
+                              on_error=on_error,
+                              on_close=on_close)
     ws.on_open = on_open
+    ws.on_message = on_message
     ws.run_forever()
