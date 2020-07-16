@@ -1,4 +1,11 @@
-14/07/2020 Websocket protocol
+16/07/2020 Frame refactor
+
+1. Cleaned up Frame implementation
+2. Added tests for frame
+
+---------------------------------------------------------------------------------
+
+15/07/2020 Frame
 
 1. Created:
 - parsing websocket message

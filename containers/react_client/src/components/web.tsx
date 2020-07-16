@@ -2,30 +2,38 @@ import * as React from "react";
 
 import { w3cwebsocket as W3CWebSocket } from "websocket";
 
+import { Address, WebSocketClient } from "../websocket_client/client";
 
-const client = new W3CWebSocket('ws://localhost:8002');
 
 export default class WebsocketClient extends React.Component {
-	componentDidMount() {
-		client.onopen = () => {
-			console.log('Websocket client connected');
-		};
-		client.onmessage = (message) => {
-			console.log("do I even")
-			console.log(message);
-		}
+	private client: WebSocketClient;
+	constructor(props: any) {
+		super(props);
+		const address = {host: "localhost", port: 8002};
+		this.client = new WebSocketClient(address);
+		this.debug_button = this.debug_button.bind(this);
 	}
 
-	connect() {
+	componentDidMount() {
+		this.client.connect();
+		this.client.onopen(() => {
+			console.log('Websocket client connected');
+		})
+		this.client.onmessage((message: any) => {
+			console.log("Message", message);
+		})
+	}
+
+	debug_button() {
 		console.log("sending");
-		client.send(JSON.stringify({"username": "react client"}));
+		this.client.send(JSON.stringify({"username": "react client"}));
 	}
 
 	render() {
 		return (
 			<div>
 				Dupa
-				<a onClick={this.connect}>send</a>
+				<a onClick={this.debug_button}>send</a>
 			</div>
 		)
 	}

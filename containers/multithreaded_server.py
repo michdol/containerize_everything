@@ -28,7 +28,12 @@ from protocol import (
 	create_payload,
 )
 from websocket_protocol import (
+	ConnectionClosedError,
+	Frame,
 	WebSocket,
+	PING,
+	PONG,
+	TEXT
 )
 from settings import (
 	CLIENTS,
@@ -99,7 +104,7 @@ class Server(object):
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
-			client = WebSocket(client_socket, address)
+			client = WebSocket(self, client_socket, address)
 			client.handle_data()
 			logging.info("{} Handshake complete".format(client))
 			# TODO: this might should go with lock?
@@ -125,16 +130,27 @@ class Server(object):
 		"""
 		try:
 			client = self.clients[client_socket]
-			client.handle_data()
-			frame = client.create_frame("Ok from server".encode("utf-8"), mask=False)
-			logging.debug("Sending response {}".format(frame))
-			client.send_buffer(frame)
-		# TODO: create custom errors corresponding to websocket protocol cases
-		# ex.: message not masked error
+			client_message: Frame = client.handle_data()
+			logging.info("{} Received {}".format(client, client_message))
+
+			mask: bool = False
+			message: bytes = b''
+			opcode: int = TEXT
+			if client_message.opcode == PING:
+				opcode = PONG
+			elif client_message.opcode == TEXT:
+				message = b'Ok from server'
+			response = Frame.create_frame(message, mask=mask, opcode=opcode)
+			if response:
+				logging.info("{} Sending response {}".format(client, response))
+				client.send_buffer(response.frame)
 		except Exception as e:
 			self.sockets.remove(client_socket)
 			del self.clients[client_socket]
-			logging.error("{} Exception handling message: {}".format(client, e))
+			if isinstance(e, ConnectionClosedError):
+				logging.info("{} closed connection".format(client, e))
+			else:
+				logging.error("{} Exception handling message: {}".format(client, e))
 			self.handle_exception(client_socket, e)
 
 	### To be deprecated ###
