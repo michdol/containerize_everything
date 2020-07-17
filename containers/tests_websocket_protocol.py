@@ -197,12 +197,3 @@ class FrameTest(TestCase):
 		data = bytearray([0x81, 0xFF]) + length + mask_bits
 		mask = Frame.parse_mask(data)
 		self.assertEqual(mask, mask_bits)
-
-	def test_decode_data_masked(self):
-		message = b"Hello"
-		mask, masked_message = Frame.mask_payload(message)
-		data_index = 6
-		data = bytearray([0x81, 1 << 7 | len(message)]) + mask + masked_message
-
-		decoded_message = Frame.decode_data(data, mask, data_index)
-		self.assertEqual(decoded_message, "Hello")

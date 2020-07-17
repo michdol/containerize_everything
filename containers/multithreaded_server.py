@@ -90,7 +90,7 @@ class Server(object):
 				for notified_socket in read:
 					if notified_socket is self.socket:
 						client_socket, address = self.socket.accept()
-						client_socket.setblocking(0)
+						#client_socket.setblocking(0)
 						self.handle_new_connection(client_socket, address)
 					else:
 						self.handle_message(notified_socket)
@@ -104,13 +104,14 @@ class Server(object):
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
-			client = WebSocket(self, client_socket, address)
+			client = WebSocket(client_socket, address)
 			client.handle_data()
 			logging.info("{} Handshake complete".format(client))
 			# TODO: this might should go with lock?
 			self.clients[client_socket] = client
 			self.sockets.append(client_socket)
 		except Exception as e:
+			raise e
 			logging.error("Exception handling new connection: {}".format(e))
 
 	def handle_message(self, client_socket: socket.socket):
@@ -152,169 +153,6 @@ class Server(object):
 			else:
 				logging.error("{} Exception handling message: {}".format(client, e))
 			self.handle_exception(client_socket, e)
-
-	### To be deprecated ###
-
-	def custom_protocol_handle_message(self, client_socket: socket.socket):
-		"""
-		To be deprecated
-		"""
-		try:
-			request: Optional[Request] = self.build_request(client_socket)
-			client = self.identify_client(client_socket)
-			if not request:
-				logging.info("{} closed connection, removing".format(client))
-				self.remove_client(client)
-				return
-			# TODO: handle each type of client in separate thread?
-			if isinstance(client, Worker):
-				self.handle_worker_request(client, request)
-			elif client is self.master:
-				self.handle_master_request(request)
-			elif isinstance(client, Client):
-				self.handle_client_request(client, request)
-			else:
-				logging.error("{} Unknown client: {}".format(request, client))
-		except Exception as e:
-			logging.error("Exception while handling message {}".format(e))
-			self.handle_exception(client_socket, e)
-
-	def custom_protocol_handle_new_connection(self, client_socket: socket.socket, address: Address):
-		"""
-		To be deprecated
-		"""
-		try:
-			request: Optional[Request] = self.build_request(client_socket)
-			if not request:
-				return
-			logging.debug("Received {}".format(request))
-			try:
-				logging.debug("Acquiring lock to authenticate the client")
-				self.lock.acquire()
-				logging.debug("Lock acquired")
-				client: Connection = self.authenticate(client_socket, address, request)
-			finally:
-				logging.debug("Releasing lock after authentication")
-				self.lock.release()
-			logging.info("{} connected".format(client))
-			response: bytes = create_payload(
-				source=self.id,
-				destination=client.id,
-				destination_type=DestinationType.CLIENT,
-				message="connected, ok",
-				message_type=MessageType.INITIAL_CONNECTION
-			)
-			logging.info("{} sending response {!r}".format(client, response))
-			client.socket.send(response)
-		except Exception as e:
-			logging.error("Exception while handling new connection {}".format(e))
-			self.handle_exception(client_socket, e)
-
-	def build_request(self, client_socket: socket.socket) -> Optional[Request]:
-		"""
-		Retrieves and build request from client.
-		Retrieval takes place in two stages.
-		First - receive request header of specified length (check constants.py).
-		Second - receive the message following the head. Message length is specified
-						 in the header.
-
-		Example request:
-		0				 1																2						3							 4
-		{source}|{destination_type}|{destination}|{time_sent}|{message_type}|{message_length} {message}
-
-		source - uuid.UUID (32 characters)
-		destination_type - str 'i' or 'g'
-									i - id, destination is specific client
-									g - group, destination is a group of clients
-		destination - uuid.UUID (32 characters)
-		time_sent - int (10 digits)
-		message_type - int (zero-padded 2 digits) (check constants.py)
-		message_length - int (zero-padded 10 digits), length of the message
-										 following the header
-
-		Space character separates header with message.
-		message - json
-
-		Considering above HEADER_LENGTH constants has been choosen to 101 characters
-		including the space separating header from message. Any socket after receiving header
-		will have to receive only message without having to worry about the space.
-
-		Args:
-			client_socket (socket.socket)
-
-		Returns:
-			request (Request)
-		"""
-		try:
-			header: bytes = client_socket.recv(HEADER_LENGTH)
-			if len(header) == 0:
-				return None
-			logging.debug("Received header: {!r}".format(header))
-			values = [value for value in header.decode("utf-8").split("|")]
-			message_length = int(values[5])
-			message: bytes = client_socket.recv(message_length)
-			destination_type = DestinationType(values[1])
-			destination = uuid.UUID(values[2])
-			return Request(
-				raw_header=header,
-				raw_message=message,
-				source=uuid.UUID(values[0]),
-				destination=destination,
-				destination_type=destination_type,
-				time_sent=int(values[3]),
-				message_type=MessageType(int(values[4])),
-				message_length=message_length,
-				message=message.decode("utf-8")  # TODO: should this be json.loads(message)
-			)
-		except socket.error as e:
-			err = e.args[0]
-			if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
-				logging.info("No data available")
-			else:
-				logging.error("Error receiving data {}".format(e))
-				sys.exit()
-
-	def authenticate(self, client_socket: socket.socket, address: Address, request: Request) -> Connection:
-		"""
-		Authenticate new connection - currently dummy authentication
-		Create apropriate client and associate with corrent group
-		Add client_socket to self.sockets
-
-		Args:
-			client_socket - socket sending its initial request
-			address - address of the socket
-			request - parsed request sent by the socket
-
-		Returns:
-			client (Connection) - authenticated client, worker or master
-
-		Raises:
-			MasterAlreadyConnectedError - if Master client has already been connected
-			AuthenticationError - in case authentication fails
-		"""
-		client: Optional[Connection] = None
-		id_ = uuid.uuid4()
-		if request.message == "I'm a client":
-			client = Client(id_=id_, sock=client_socket, address=address)
-			self.clients[client_socket] = client
-			self.clients_index[client.id] = client_socket
-		elif request.message == "I'm a worker":
-			client = Worker(id_=id_, sock=client_socket, address=address)
-			self.workers[client_socket] = client
-		elif request.message == "I'm a master":
-			client = Master(id_=id_, sock=client_socket, address=address)
-			if not self.master:
-				logging.info("{} has connected")
-				self.master = client
-				self.clients[client_socket] = client
-				self.clients_index[client.id] = client_socket
-			else:
-				raise MasterAlreadyConnectedError("TODO: master attempted connect when already one has been connected")
-		else:
-			raise AuthenticationError("TODO: unknown user")
-		self.sockets.append(client_socket)
-		logging.info("{} authenticated".format(client))
-		return client
 
 	def handle_worker_request(self, worker: Worker, request: Request):
 		logging.info("{} Incomming new message {}".format(worker, request))

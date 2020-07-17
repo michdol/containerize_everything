@@ -1,5 +1,6 @@
 import errno
 import hashlib
+import hmac
 import itertools
 import logging
 import random
@@ -9,9 +10,12 @@ import struct
 import sys
 
 from base64 import encodebytes as base64encode
-from http.server import BaseHTTPRequestHandler
+from http.client import HTTPResponse
 from io import BytesIO
+
 from typing import Dict, Tuple, Optional, List, Union
+from _http import HTTPRequest, BytesIOSocket
+
 # https://tools.ietf.org/html/rfc6455#page-27
 # https://github.com/dpallot/simple-websocket-server/blob/master/SimpleWebSocketServer/SimpleWebSocketServer.py
 # line 270
@@ -86,7 +90,7 @@ def receive_message(client_socket: socket.socket) -> Optional[bytes]:
 			sys.exit()
 
 
-MAGIC_KEY = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+MAGIC_KEY = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 TEXT = 0x01
 BINARY = 0x02
@@ -99,14 +103,14 @@ HANDSHAKE_HEADER_LENGTH = 2048
 MAX_HEADER_LENGTH = 65536
 BUFFER_LENGTH = 16384
 
-HANDSHAKE_STR = (
+SERVER_HANDSHAKE_RESPONSE = (
 	b"HTTP/1.1 101 Switching Protocols\r\n"
 	b"Upgrade: WebSocket\r\n"
 	b"Connection: Upgrade\r\n"
 	b"Sec-WebSocket-Accept: %s\r\n\r\n"
 )
 
-FAILED_HANDSHAKE_STR = (
+SERVER_HANDSHAKE_FAILED_RESPONSE = (
 	"HTTP/1.1 426 Upgrade Required\r\n"
 	"Upgrade: WebSocket\r\n"
 	"Connection: Upgrade\r\n"
@@ -278,23 +282,9 @@ class Frame(object):
 		return bytes(b ^ m for b, m in zip(payload, itertools.cycle(mask))), mask
 
 
-
-class HTTPRequest(BaseHTTPRequestHandler):
-	def __init__(self, request_text):
-		self.rfile = BytesIO(request_text)
-		self.raw_requestline = self.rfile.readline()
-		self.error_code = self.error_message = None
-		self.parse_request()
-
-	def send_error(self, code, message):
-		self.error_code = code
-		self.error_message = message
-
-
 class WebSocket(object):
-	def __init__(self, server: socket.socket, sock: socket.socket, address: Address):
-		self.server: socket.socket = server
-		self.client_socket: socket.socket = sock
+	def __init__(self, sock: socket.socket, address: Address):
+		self.socket: socket.socket = sock
 		self.address: Address = address
 
 		self.handshake_complete: bool = False
@@ -309,7 +299,7 @@ class WebSocket(object):
 
 		while to_send > 0:
 			try:
-				sent = self.client_socket.send(buff[already_sent:])
+				sent = self.socket.send(buff[already_sent:])
 				if sent == 0:
 					raise SocketConnectionBroken("Client closed connection")
 				already_sent += sent
@@ -324,30 +314,119 @@ class WebSocket(object):
 
 	def handle_data(self) -> Optional[Frame]:
 		if self.handshake_complete:
-			data: bytes = receive_message(self.client_socket)
-			message: Frame = Frame.parse_frame(data)
+			data: bytes = self.receive_message(BUFFER_LENGTH)
+			message: Frame = Frame.parse_frame(data, is_client_frame=True)
 			logging.info("Parsed message {}".format(message))
 			return message
 		else:
-			self.handshake()
+			self.accept_handshake()
 
-	def handshake(self):
-		data = self.client_socket.recv(HANDSHAKE_HEADER_LENGTH)
+	def receive_message(self, buff: int=BUFFER_LENGTH) -> Optional[bytes]:
+		try:
+			chunks: List[bytes] = []
+			bytes_received: int = 0
+			while True:
+				chunk = self.socket.recv(buff)
+				chunks.append(chunk)
+				bytes_received += len(chunk)
+				length: int = len(chunk)
+				logging.debug("CHUNK: {!r}".format(chunk))
+				if length == 0:
+					raise ConnectionClosedError("Client closed connection")
+				elif length < buff:
+					return b''.join(chunks)
+		except socket.error as e:
+			logging.error("{} Error receiving message: {}".format(self, e))
+			err = e.args[0]
+			if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
+				logging.info("No more data available, {}".format(chunks))
+				# Assume: whole message received, parse it
+				return b''.join(chunks)
+			else:
+				logging.error("Error receiving data {}".format(e))
+				sys.exit()
+
+	def accept_handshake(self):
+		"""
+		TODO: test this on incorrect request
+		"""
+		data = self.receive_message(HANDSHAKE_HEADER_LENGTH)
 		if not data:
 			raise ConnectionClosedError()
 		if b'\r\n\r\n' in data:
 			request = HTTPRequest(data)
 			response: bytes = b''
 			try:
-				key = request.headers['Sec-WebSocket-Key']
-				value = (key + MAGIC_KEY).encode('utf-8')
-				hash_ = base64encode(hashlib.sha1(value).digest()).strip()
-				response: bytes = (HANDSHAKE_STR % hash_)
+				key: bytes = request.headers['Sec-WebSocket-Key'].strip().encode('ascii')
+				"""
+				sha1 = hashlib.sha1()
+				sha1.update(key + MAGIC_KEY)
+				hash_: bytes = base64encode(sha1.digest()).strip()
+				"""
+				hash_ = self.hash_key(key)
+				response: bytes = (SERVER_HANDSHAKE_RESPONSE % hash_)
 				logging.debug("Handshake response {}".format(response))
-				self.client_socket.send(response)
+				sent = self.socket.send(response)
+				print("SENT BYTES", sent)
 				self.handshake_complete = True
 			except Exception as e:
-				response = FAILED_HANDSHAKE_STR.encode('ascii')
+				response = SERVER_HANDSHAKE_FAILED_RESPONSE.encode('ascii')
 				self.send_buffer(response, send_all=True)
-				self.client_socket.close()
+				self.socket.close()
 				raise e
+
+	def send_handshake(self):
+		try:
+			raw_key = bytes(random.getrandbits(8) for _ in range(16))
+			key = base64encode(raw_key)
+			hostname: bytes = socket.gethostname().encode('utf-8')
+			template = (
+				b"GET / HTTP/1.1\r\n",
+				b"Host: %s\r\n" % hostname,
+				b"Connection: Upgrade\r\n",
+				b"Upgrade: websocket\r\n",
+				b"Sec-WebSocket-Version: 13\r\n",
+				b"Sec-WebSocket-Key: %s\r\n\r\n" % key,
+			)
+			request: bytes = b''.join(template)
+			logging.debug("Sending handshake request\n{}\n{}".format(request, key))
+			self.send_buffer(request)
+
+			response = self.receive_message(BUFFER_LENGTH)
+			response_key: bytes = self.get_sec_websocket_key_from_response(response)
+			logging.debug("Server response\n{}\n{}".format(response, response_key))
+
+			self.test(key, response_key)
+			self.compare_sec_websocket_key(key, response_key)
+		except Exception as e:
+			raise e
+
+	def hash_key(self, key: bytes) -> bytes:
+		sha1 = hashlib.sha1()
+		sha1.update(key + MAGIC_KEY)
+		return base64encode(sha1.digest()).strip()
+
+	@staticmethod
+	def compare_sec_websocket_key(key: bytes, response_key: bytes) -> bool:
+		sha1 = hashlib.sha1()
+		sha1.update(key + MAGIC_KEY)
+		hashed = base64encode(sha1.digest()).strip()
+		logging.debug("Comparing\n{}\n{}".format(hashed, response_key))
+		return hmac.compare_digest(hashed, response_key)
+
+	def get_sec_websocket_key_from_response(self, response: bytes) -> bytes:
+		source = BytesIOSocket(response)
+		res = HTTPResponse(source)
+		res.begin()
+		key: str = res.headers.get('Sec-WebSocket-Accept')
+		if not key:
+			raise ValueError("Server response is missing Sec-WebSocket-Accept")
+		return key.encode('utf-8')
+
+	def test(self, key: bytes, res_key: bytes):
+		print("TESTING\non key\n{}\nresponse key\n{}".format(key, res_key))
+		sha1 = hashlib.sha1()
+		sha1.update(key + MAGIC_KEY)
+		hashed = base64encode(sha1.digest()).strip()
+		print("hashed")
+		print(hashed)
