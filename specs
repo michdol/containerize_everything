@@ -1,5 +1,13 @@
 17/07/2020 Frame refactor
 
+1. Fixed sending handshake
+2. Simplified WebSocket interface
+3. Slightly refactored server
+
+---------------------------------------------------------------------------------
+
+17/07/2020 Frame refactor
+
 1. Writing client side websocket protocol
 2. Comparing digests
 3. Moved http related elements to separate module

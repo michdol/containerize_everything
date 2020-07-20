@@ -2,19 +2,34 @@ import logging
 import socket
 
 from settings import SERVER_ADDRESS
-from websocket_protocol import WebSocket
+from websocket_protocol import WebSocket, PING, TEXT
 
 
 def main():
+	SERVER_ADDRESS = ("174.129.224.73", 443)
 	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	s.connect(SERVER_ADDRESS)
 	# This will require a separate thread waiting for the response
 	# or setblock(False) to be called after handshake
 	# s.setblocking(False)
 
-	ws = WebSocket(s, ("", 0))
+	try:
+		ws = WebSocket(s, SERVER_ADDRESS, is_client=False)
 
-	ws.send_handshake()
+		ws.handshake()
+		logging.info("Handshake complete")
+
+		while True:
+			message = input("\nGive me input\n")
+			if message == "ping":
+				logging.info("Pinging server")
+				ws.send_message(b'', PING)
+			else:
+				logging.info("Sending: {}".format(message))
+				ws.send_message(message.encode('utf-8'), TEXT)
+			ws.handle_data()
+	finally:
+		s.close()
 
 
 if __name__ == "__main__":

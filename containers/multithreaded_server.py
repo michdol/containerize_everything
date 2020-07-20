@@ -104,15 +104,17 @@ class Server(object):
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
-			client = WebSocket(client_socket, address)
-			client.handle_data()
+			client = WebSocket(client_socket, address, is_client=True)
+			client.handshake()
 			logging.info("{} Handshake complete".format(client))
 			# TODO: this might should go with lock?
 			self.clients[client_socket] = client
 			self.sockets.append(client_socket)
 		except Exception as e:
-			raise e
+			client_socket.close()
 			logging.error("Exception handling new connection: {}".format(e))
+			self.handle_exception(client_socket, e)
+			raise e
 
 	def handle_message(self, client_socket: socket.socket):
 		"""
@@ -132,7 +134,7 @@ class Server(object):
 		try:
 			client = self.clients[client_socket]
 			client_message: Frame = client.handle_data()
-			logging.info("{} Received {}".format(client, client_message))
+			logging.info("{} Received {} : {}".format(client, client_message, client_message.payload))
 
 			mask: bool = False
 			message: bytes = b''
@@ -141,13 +143,12 @@ class Server(object):
 				opcode = PONG
 			elif client_message.opcode == TEXT:
 				message = b'Ok from server'
-			response = Frame.create_frame(message, mask=mask, opcode=opcode)
-			if response:
-				logging.info("{} Sending response {}".format(client, response))
-				client.send_buffer(response.frame)
+			logging.info("{} Sending response {} : {}".format(client, opcode, message))
+			client.send_message(message, opcode)
 		except Exception as e:
 			self.sockets.remove(client_socket)
 			del self.clients[client_socket]
+			client_socket.close()
 			if isinstance(e, ConnectionClosedError):
 				logging.info("{} closed connection".format(client, e))
 			else:
