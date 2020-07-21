@@ -1,12 +1,32 @@
 import random
+import socket
 import struct
 
 from unittest import main, TestCase, mock
 
-from websocket_protocol import WebSocket, Frame, TEXT
+from websocket_protocol import (
+	WebSocket,
+	WebSocketState,
+	Frame,
+	TEXT,
+	ConnectionClosedError,
+)
 
 
 class FrameTest(TestCase):
+	def test_str(self):
+		frame = Frame(b'', 1, (0, 0, 0,), TEXT, 5, 1, b'mock_mask', '')
+		self.assertEqual(str(frame), "Frame(1:text:1)")
+
+	def test_is_masked(self):
+		frame = Frame(b'', 1, (0, 0, 0,), TEXT, 5, 1, b'mock_mask', '')
+		self.assertTrue(frame.is_masked)
+
+		frame = Frame(b'', 1, (0, 0, 0,), TEXT, 5, 1, None, '')
+		self.assertFalse(frame.is_masked)
+		frame = Frame(b'', 1, (0, 0, 0,), TEXT, 5, 1, b'', '')
+		self.assertFalse(frame.is_masked)
+
 	def test_parse_frame_from_client(self):
 		"""
 		Expected: a proper client Frame object returned
@@ -108,13 +128,6 @@ class FrameTest(TestCase):
 		with self.assertRaises(ValueError) as e:
 			Frame.parse_frame(data, is_client_frame=False)
 
-	def test_is_masked(self):
-		frame = Frame(b'', 1, (0, 0, 0,), TEXT, 5, 1, b'mock_mask', '')
-		self.assertTrue(frame.is_masked)
-
-		frame = Frame(b'', 1, (0, 0, 0,), TEXT, 5, 1, None, '')
-		self.assertFalse(frame.is_masked)
-
 	def test_parse_message_length_frame_not_masked(self):
 		data = bytearray([0x81, 0x7D])
 		length, index = Frame.parse_message_length(data)
@@ -197,3 +210,112 @@ class FrameTest(TestCase):
 		data = bytearray([0x81, 0xFF]) + length + mask_bits
 		mask = Frame.parse_mask(data)
 		self.assertEqual(mask, mask_bits)
+
+	@mock.patch("websocket_protocol.random.getrandbits")
+	def test_create_frame_short_masked(self, mock_randbits):
+		randbits = 2095544415
+		mock_randbits.return_value = randbits
+		message = b'Ok from server'
+		expected_data, mock_mask = Frame.mask_payload(message)
+		opcode = TEXT
+		frame = Frame.create_frame(message, opcode, mask=True)
+
+		expected_frame = b'\x81\x8e' + mock_mask + expected_data
+		self.assertEqual(frame.frame, expected_frame)
+		self.assertEqual(frame.fin, 1)
+		self.assertEqual((frame.rsv1, frame.rsv2, frame.rsv3), (0, 0, 0))
+		self.assertEqual(frame.opcode, 1)
+		self.assertEqual(frame.length, 14)
+		self.assertEqual(frame.data_first_byte_index, 6)
+		self.assertEqual(frame.mask, mock_mask)
+		self.assertEqual(Frame.decode_data(frame.frame, mock_mask, 6), 'Ok from server')
+
+	def test_create_frame_short_not_masked(self):
+		message = b'Ok from server'
+		opcode = TEXT
+		frame = Frame.create_frame(message, opcode, mask=False)
+
+		self.assertEqual(frame.frame, b'\x81\x0eOk from server')
+		self.assertEqual(frame.fin, 1)
+		self.assertEqual((frame.rsv1, frame.rsv2, frame.rsv3), (0, 0, 0))
+		self.assertEqual(frame.opcode, 1)
+		self.assertEqual(frame.length, 14)
+		self.assertEqual(frame.data_first_byte_index, 2)
+		self.assertEqual(frame.mask, b'')
+		self.assertEqual(frame.payload, b'Ok from server')
+
+		self.assertFalse(frame.is_masked)
+
+	def test_create_frame_medium_not_masked(self):
+		message = b'a' * 126
+		opcode = TEXT
+		frame = Frame.create_frame(message, opcode, mask=False)
+
+		self.assertEqual(frame.frame, b'\x81\x7e\x00~' + message)
+		self.assertEqual(frame.fin, 1)
+		self.assertEqual((frame.rsv1, frame.rsv2, frame.rsv3), (0, 0, 0))
+		self.assertEqual(frame.opcode, 1)
+		self.assertEqual(frame.length, 126)
+		self.assertEqual(frame.data_first_byte_index, 4)
+		self.assertEqual(frame.mask, b'')
+		self.assertEqual(frame.payload, b'a' * 126)
+
+	def test_create_frame_long_not_masked(self):
+		message = b'a' * 65536
+		opcode = TEXT
+		frame = Frame.create_frame(message, opcode, mask=False)
+
+		self.assertEqual(frame.frame, b'\x81\x7f\x00\x00\x00\x00\x00\x01\x00\x00' + message)
+		self.assertEqual(frame.fin, 1)
+		self.assertEqual((frame.rsv1, frame.rsv2, frame.rsv3), (0, 0, 0))
+		self.assertEqual(frame.opcode, 1)
+		self.assertEqual(frame.length, 65536)
+		self.assertEqual(frame.data_first_byte_index, 10)
+		self.assertEqual(frame.mask, b'')
+		self.assertEqual(frame.payload, b'a' * 65536)
+
+
+class WebSocketTest(TestCase):
+	def test_str(self):
+		address = ("0.0.0.0", 80)
+		ws = WebSocket(socket.socket, address, is_client=False)
+		self.assertEqual(str(ws), "WebSocket((\'0.0.0.0\', 80):0)")
+
+	"""
+	def test_handshake_client(self):
+		address = ("0.0.0.0", 80)
+		ws = WebSocket(socket.socket, address, is_client=True)
+
+		ws.accept_handshake()
+
+		self.assertTrue(ws.handshake_complete)
+		self.assertEqual(ws.state, WebSocketState.OPEN)
+	"""
+
+	def test_receive_message(self):
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.return_value = b'mock payload'
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		message: bytes = ws.receive_message()
+		self.assertEqual(message, b'mock payload')
+
+	@mock.patch('websocket_protocol.socket.socket.recv')
+	def test_receive_message_longer_than_buffer(self, mock_socket):
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.return_value = b'payload'
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		message: bytes = ws.receive_message(3)
+		self.assertEqual(message, b'payload')
+
+	def test_receive_message_connection_closed(self):
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.return_value = b''
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		with self.assertRaises(ConnectionClosedError):
+			ws.receive_message()

@@ -5,3 +5,5 @@ containers/react_client/node_modules
 containers/react_client/yarn-error.log
 containers/.mypy*/
 *.pyc
+.coverage
+htmlcov/

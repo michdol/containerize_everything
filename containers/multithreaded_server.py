@@ -51,6 +51,7 @@ class Server(object):
 		self.socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.socket.bind(self.address)
+		self.socket.setblocking(False)
 		self.sockets: List[socket.socket] = [self.socket]
 
 		self.lock = threading.Lock()
@@ -90,6 +91,7 @@ class Server(object):
 				for notified_socket in read:
 					if notified_socket is self.socket:
 						client_socket, address = self.socket.accept()
+						client_socket.setblocking(False)
 						self.handle_new_connection(client_socket, address)
 					else:
 						self.handle_message(notified_socket)
@@ -133,6 +135,8 @@ class Server(object):
 		try:
 			client = self.clients[client_socket]
 			client_message: Frame = client.handle_data()
+			if not client_message:
+				return
 			logging.info("{} Received {} : {}".format(client, client_message, client_message.payload))
 
 			response: Optional[Tuple[bytes, int]] = None

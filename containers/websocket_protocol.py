@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import errno
 import hashlib
 import hmac
@@ -19,7 +21,6 @@ from _http import HTTPRequest, BytesIOSocket
 
 
 Address = Tuple[str, int]
-Mask = List[bytes]
 
 
 class WebSocketException(Exception):
@@ -98,16 +99,16 @@ class Frame(object):
 		PONG: "pong",
 	}
 
-	def __init__(self, frame: bytes, fin: int, rsv: Tuple[int], opcode: int, length: int,
-							 data_byte_idx: int, mask: Optional[Mask], payload: Union[str, bytes]):
+	def __init__(self, frame: bytes, fin: int, rsv: Tuple[int, int, int], opcode: int, length: int,
+							 data_byte_idx: int, mask: Optional[bytes], payload: Union[str, bytes]):
 		self.frame: bytes = frame
 		self.fin: int = fin
 		self.rsv1, self.rsv2, self.rsv3 = rsv
 		self.opcode: int = opcode
 		self.length: int = length
-		self.mask: Optional[Mask] = mask
+		self.mask: Optional[bytes] = mask
 		self.data_first_byte_index = data_byte_idx
-		self.payload: str = payload
+		self.payload: Union[str, bytes] = payload
 
 	def __str__(self) -> str:
 		return "Frame({fin}:{opcode}:{is_masked})".format(
@@ -118,7 +119,7 @@ class Frame(object):
 
 	@property
 	def is_masked(self) -> bool:
-		return self.mask is not None
+		return bool(self.mask)
 
 	@classmethod
 	def parse_frame(cls, data: bytes, is_client_frame=False):
@@ -172,7 +173,7 @@ class Frame(object):
 		return message_length, data_first_byte_index
 
 	@staticmethod
-	def parse_mask(data: bytes) -> Optional[Mask]:
+	def parse_mask(data: bytes) -> Optional[bytes]:
 		"""
 		TODO: docstring
 		"""
@@ -187,7 +188,7 @@ class Frame(object):
 		return data[mask_first_byte_index:mask_first_byte_index + 4] if is_masked else None
 
 	@staticmethod
-	def decode_data(data: bytes, mask: bytes, data_index: int) -> str:
+	def decode_data(data: bytes, mask: Optional[bytes], data_index: int) -> str:
 		if mask:
 			decoded_data = []
 			j = 0
@@ -201,7 +202,7 @@ class Frame(object):
 			return data[data_index:].decode('utf-8')
 
 	@classmethod
-	def create_frame(cls, message: bytes, opcode: int, mask: bool) -> bytes:
+	def create_frame(cls, message: bytes, opcode: int, mask: bool) -> Frame:
 		length: int = len(message)
 		# TODO: add fragmentation
 		fin, rsv1, rsv2, rsv3, opcode = 1, 0, 0, 0, opcode
@@ -271,7 +272,7 @@ class WebSocket(object):
 
 	def send_message(self, message: bytes, opcode: int):
 		frame: Frame = Frame.create_frame(message, opcode, mask=not self.is_client)
-		logging.debug("Sending response {} : {}".format(frame, frame.payload))
+		logging.debug("Sending response {} : {!r}".format(frame, frame.payload))
 		self.send_buffer(frame.frame)
 
 	def send_buffer(self, buff: bytes, send_all: bool = False) -> Optional[bytes]:
@@ -290,44 +291,48 @@ class WebSocket(object):
 				if e.errno in [errno.EAGAIN, errno.EWOULDBLOCK]:
 					if send_all:
 						continue
-					return buff[alread_sent:]
+					return buff[already_sent:]
 				else:
 					raise e
+		return None
 
 	def handle_data(self) -> Optional[Frame]:
 		if self.handshake_complete:
 			data: bytes = self.receive_message(BUFFER_LENGTH)
+			if not data:
+				return
 			try:
 				frame: Frame = Frame.parse_frame(data, is_client_frame=self.is_client)
 			except FrameMaskError as e:
 				logging.error("Closing connection with {} - {}".format(self, e.args[0]))
 				self.send_message(b'', CLOSE)
 				raise e
-			logging.debug("Parsed message {} : {}".format(frame, frame.payload))
+			logging.debug("Parsed message {} : {!r}".format(frame, frame.payload))
 			return frame
 		raise WebSocketException("Handshake not complete")
 
-	def receive_message(self, buff: int=BUFFER_LENGTH) -> Optional[bytes]:
+	def receive_message(self, buff: int=BUFFER_LENGTH) -> bytes:
+		"""
+		This requires non-blocking sockets
+		"""
 		try:
-			chunks: List[bytes] = []
-			bytes_received: int = 0
-			while True:
-				chunk = self.socket.recv(buff)
-				chunks.append(chunk)
-				bytes_received += len(chunk)
-				length: int = len(chunk)
+			chunks = bytearray()
+			while len(chunks) < buff:
+				chunk = self.socket.recv(buff - len(chunks))
 				logging.debug("CHUNK: {!r}".format(chunk))
-				if length == 0:
-					raise ConnectionClosedError("Client closed connection")
-				elif length < buff:
-					return b''.join(chunks)
+				if not chunk:
+					break
+				chunks.extend(chunk)
+			logging.info("Received {} bytes".format(len(chunks)))
+			return bytes(chunks)
 		except socket.error as e:
-			logging.error("{} Error receiving message: {}".format(self, e))
 			err = e.args[0]
 			if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
-				logging.debug("No more data available, {}".format(chunks))
+				logging.debug("No more data available")
 				# Assume: whole message received, parse it
-				return b''.join(chunks)
+				return bytes(chunks)
+			elif err == errno.ECONNRESET:
+				raise ConnectionClosedError("Clonnection closed")
 			raise e
 
 	def handshake(self):
@@ -350,7 +355,7 @@ class WebSocket(object):
 				key: bytes = request.headers['Sec-WebSocket-Key'].strip().encode('utf-8')
 				hash_ = self.hash_key(key)
 				response: bytes = (SERVER_HANDSHAKE_RESPONSE % hash_)
-				logging.debug("Handshake response {}".format(response))
+				logging.debug("Handshake response {!r}".format(response))
 				sent = self.socket.send(response)
 				self.handshake_complete = True
 				self.state = WebSocketState.OPEN
@@ -366,6 +371,7 @@ class WebSocket(object):
 		return base64encode(sha1.digest()).strip()
 
 	def send_handshake(self):
+		self.socket.setblocking(True)
 		raw_key = bytes(random.getrandbits(8) for _ in range(16))
 		key = base64encode(raw_key)[:-1]
 		hostname: bytes = socket.gethostname().encode('utf-8')
@@ -378,10 +384,11 @@ class WebSocket(object):
 			b"Sec-WebSocket-Key: %s\r\n\r\n" % key,
 		)
 		request: bytes = b'\r\n'.join(template)
-		logging.debug("Sending handshake request {}".format(request))
+		logging.debug("Sending handshake request {!r}".format(request))
 		self.send_buffer(request)
 
-		response = self.receive_message(BUFFER_LENGTH)
+		response = self.socket.recv(BUFFER_LENGTH)
+		self.socket.setblocking(False)
 		response_key: bytes = self.get_sec_websocket_key_from_response(response)
 		logging.debug("Server response {}".format(response))
 		key_correct = self.compare_sec_websocket_key(key, response_key)
@@ -402,7 +409,7 @@ class WebSocket(object):
 
 	def compare_sec_websocket_key(self, key: bytes, response_key: bytes) -> bool:
 		hashed = self.hash_key(key)
-		logging.debug("Comparing {} {}".format(hashed, response_key))
+		logging.debug("Comparing {!r} {!r}".format(hashed, response_key))
 		return hmac.compare_digest(hashed, response_key)
 
 	def close_connection(self):

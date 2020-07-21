@@ -3,6 +3,8 @@
 1. Refactored handling messages
 2. Added closing handshake
 3. Added WebSocketState enum
+4. Refactored receiving messages
+5. Added tests for WebSocket
 
 ---------------------------------------------------------------------------------
 

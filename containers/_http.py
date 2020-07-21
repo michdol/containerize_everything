@@ -1,3 +1,5 @@
+import socket
+
 from http.server import BaseHTTPRequestHandler
 from io import BytesIO
 
@@ -14,7 +16,7 @@ class HTTPRequest(BaseHTTPRequestHandler):
 		self.error_message = message
 
 
-class BytesIOSocket():
+class BytesIOSocket(socket.socket):
 	def __init__(self, response: bytes):
 		self._file = BytesIO(response)
 
