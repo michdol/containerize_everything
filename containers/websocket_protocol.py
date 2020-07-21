@@ -10,46 +10,16 @@ import struct
 import sys
 
 from base64 import encodebytes as base64encode
+from enum import IntEnum
 from http.client import HTTPResponse
 from io import BytesIO
 
 from typing import Dict, Tuple, Optional, List, Union
 from _http import HTTPRequest, BytesIOSocket
 
-# https://tools.ietf.org/html/rfc6455#page-27
-# https://github.com/dpallot/simple-websocket-server/blob/master/SimpleWebSocketServer/SimpleWebSocketServer.py
-# line 270
-# https://pymotw.com/2/socket/binary.html
 
-# decoding data from websocket decodeCharArray
-# https://gist.github.com/rich20bb/4190781
-# https://stackoverflow.com/questions/8125507/how-can-i-send-and-receive-websocket-messages-on-the-server-side
-
-# https://github.com/crossbario/autobahn-python/blob/80fe02de9754b0898d01d31f2252afdcf9ea2764/autobahn/websocket/protocol.py#L2340
-# https://github.com/crossbario/autobahn-python/blob/80fe02de9754b0898d01d31f2252afdcf9ea2764/autobahn/websocket/protocol.py#L1798
-
-"""
-https://tools.ietf.org/html/rfc6455#section-5.2
-
-0                   1                   2                   3
-0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-------+-+-------------+-------------------------------+
-|F|R|R|R| opcode|M| Payload len |    Extended payload length    |
-|I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
-|N|V|V|V|       |S|             |   (if payload len==126/127)   |
-| |1|2|3|       |K|             |                               |
-+-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
-|     Extended payload length continued, if payload len == 127  |
-+ - - - - - - - - - - - - - - - +-------------------------------+
-|                               |Masking-key, if MASK set to 1  |
-+-------------------------------+-------------------------------+
-| Masking-key (continued)       |          Payload Data         |
-+-------------------------------- - - - - - - - - - - - - - - - +
-:                     Payload Data continued ...                :
-+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
-|                     Payload Data continued ...                |
-+---------------------------------------------------------------+
-"""
+Address = Tuple[str, int]
+Mask = List[bytes]
 
 
 class WebSocketException(Exception):
@@ -64,6 +34,10 @@ class SocketConnectionBroken(WebSocketException):
 	pass
 
 
+class FrameMaskError(WebSocketException):
+	pass
+
+
 MAGIC_KEY = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 TEXT = 0x01
@@ -72,7 +46,6 @@ CLOSE = 0x8
 PING = 0x9
 PONG = 0xA
 
-Address = Tuple[str, int]
 HANDSHAKE_HEADER_LENGTH = 2048
 MAX_HEADER_LENGTH = 65536
 BUFFER_LENGTH = 16384
@@ -93,9 +66,30 @@ SERVER_HANDSHAKE_FAILED_RESPONSE = (
 	"This service requires use of the WebSocket protocol\r\n"
 )
 
-Mask = List[bytes]
 
 class Frame(object):
+	"""
+	https://tools.ietf.org/html/rfc6455#section-5.2
+
+	0                   1                   2                   3
+	0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+	+-+-+-+-+-------+-+-------------+-------------------------------+
+	|F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+	|I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+	|N|V|V|V|       |S|             |   (if payload len==126/127)   |
+	| |1|2|3|       |K|             |                               |
+	+-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+	|     Extended payload length continued, if payload len == 127  |
+	+ - - - - - - - - - - - - - - - +-------------------------------+
+	|                               |Masking-key, if MASK set to 1  |
+	+-------------------------------+-------------------------------+
+	| Masking-key (continued)       |          Payload Data         |
+	+-------------------------------- - - - - - - - - - - - - - - - +
+	:                     Payload Data continued ...                :
+	+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+	|                     Payload Data continued ...                |
+	+---------------------------------------------------------------+
+	"""
 	OPCODE_STR = {
 		TEXT: "text",
 		BINARY: "binary",
@@ -256,6 +250,13 @@ class Frame(object):
 		return bytes(b ^ m for b, m in zip(payload, itertools.cycle(mask))), mask
 
 
+class WebSocketState(IntEnum):
+	CONNECTING = 0
+	OPEN = 1
+	CLOSING = 2
+	CLOSED = 3
+
+
 class WebSocket(object):
 	def __init__(self, sock: socket.socket, address: Address, is_client: bool):
 		self.socket: socket.socket = sock
@@ -263,9 +264,10 @@ class WebSocket(object):
 		self.is_client = is_client
 
 		self.handshake_complete: bool = False
+		self.state: WebSocketState = WebSocketState.CONNECTING
 
 	def __str__(self) -> str:
-		return "WebSocket({address})".format(address=self.address)
+		return "WebSocket({address}:{state})".format(address=self.address, state=self.state)
 
 	def send_message(self, message: bytes, opcode: int):
 		frame: Frame = Frame.create_frame(message, opcode, mask=not self.is_client)
@@ -295,7 +297,12 @@ class WebSocket(object):
 	def handle_data(self) -> Optional[Frame]:
 		if self.handshake_complete:
 			data: bytes = self.receive_message(BUFFER_LENGTH)
-			frame: Frame = Frame.parse_frame(data, is_client_frame=self.is_client)
+			try:
+				frame: Frame = Frame.parse_frame(data, is_client_frame=self.is_client)
+			except FrameMaskError as e:
+				logging.error("Closing connection with {} - {}".format(self, e.args[0]))
+				self.send_message(b'', CLOSE)
+				raise e
 			logging.debug("Parsed message {} : {}".format(frame, frame.payload))
 			return frame
 		raise WebSocketException("Handshake not complete")
@@ -346,6 +353,7 @@ class WebSocket(object):
 				logging.debug("Handshake response {}".format(response))
 				sent = self.socket.send(response)
 				self.handshake_complete = True
+				self.state = WebSocketState.OPEN
 			except Exception as e:
 				response = SERVER_HANDSHAKE_FAILED_RESPONSE.encode('ascii')
 				self.send_buffer(response, send_all=True)
@@ -362,15 +370,15 @@ class WebSocket(object):
 		key = base64encode(raw_key)[:-1]
 		hostname: bytes = socket.gethostname().encode('utf-8')
 		template = (
-			b"GET / HTTP/1.1\r\n",
-			b"Host: %s\r\n" % hostname,
-			b"Connection: Upgrade\r\n",
-			b"Upgrade: websocket\r\n",
-			b"Sec-WebSocket-Version: 13\r\n",
+			b"GET / HTTP/1.1",
+			b"Host: %s" % hostname,
+			b"Connection: Upgrade",
+			b"Upgrade: websocket",
+			b"Sec-WebSocket-Version: 13",
 			b"Sec-WebSocket-Key: %s\r\n\r\n" % key,
 		)
-		request: bytes = b''.join(template)
-		logging.debug("Sending handshake request{}".format(request))
+		request: bytes = b'\r\n'.join(template)
+		logging.debug("Sending handshake request {}".format(request))
 		self.send_buffer(request)
 
 		response = self.receive_message(BUFFER_LENGTH)
@@ -381,6 +389,7 @@ class WebSocket(object):
 			raise ValueError("Key received from server is incorrect")
 		logging.debug("Handshake complete")
 		self.handshake_complete = True
+		self.state = WebSocketState.OPEN
 
 	def get_sec_websocket_key_from_response(self, response: bytes) -> bytes:
 		source = BytesIOSocket(response)
@@ -395,3 +404,16 @@ class WebSocket(object):
 		hashed = self.hash_key(key)
 		logging.debug("Comparing {} {}".format(hashed, response_key))
 		return hmac.compare_digest(hashed, response_key)
+
+	def close_connection(self):
+		"""
+		https://tools.ietf.org/html/rfc6455#section-7
+
+		Server not Client should be closing the connection.
+
+		Client closing a connection is a abnormal closure except for:
+		- transport layer connection is lost
+		- message from Server is masked
+		- hashed key returned from Server during handshake is incorrect/missing
+		"""
+		pass

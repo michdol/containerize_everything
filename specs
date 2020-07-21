@@ -1,4 +1,12 @@
-17/07/2020 Frame refactor
+21/07/2020 Frame refactor
+
+1. Refactored handling messages
+2. Added closing handshake
+3. Added WebSocketState enum
+
+---------------------------------------------------------------------------------
+
+20/07/2020 Frame refactor
 
 1. Fixed sending handshake
 2. Simplified WebSocket interface

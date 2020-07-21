@@ -6,7 +6,6 @@ from websocket_protocol import WebSocket, PING, TEXT
 
 
 def main():
-	SERVER_ADDRESS = ("174.129.224.73", 443)
 	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	s.connect(SERVER_ADDRESS)
 	# This will require a separate thread waiting for the response

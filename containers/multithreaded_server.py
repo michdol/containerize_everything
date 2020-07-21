@@ -31,9 +31,11 @@ from websocket_protocol import (
 	ConnectionClosedError,
 	Frame,
 	WebSocket,
+	WebSocketState,
 	PING,
 	PONG,
-	TEXT
+	TEXT,
+	CLOSE
 )
 from settings import (
 	CLIENTS,
@@ -106,15 +108,15 @@ class Server(object):
 		try:
 			client = WebSocket(client_socket, address, is_client=True)
 			client.handshake()
-			logging.info("{} Handshake complete".format(client))
-			# TODO: this might should go with lock?
-			self.clients[client_socket] = client
-			self.sockets.append(client_socket)
+			if client.handshake_complete:
+				logging.info("{} Handshake complete".format(client))
+				# TODO: this might should go with lock?
+				self.clients[client_socket] = client
+				self.sockets.append(client_socket)
 		except Exception as e:
 			client_socket.close()
 			logging.error("Exception handling new connection: {}".format(e))
 			self.handle_exception(client_socket, e)
-			raise e
 
 	def handle_message(self, client_socket: socket.socket):
 		"""
@@ -136,24 +138,56 @@ class Server(object):
 			client_message: Frame = client.handle_data()
 			logging.info("{} Received {} : {}".format(client, client_message, client_message.payload))
 
-			mask: bool = False
-			message: bytes = b''
-			opcode: int = TEXT
+			response: Optional[Tuple[bytes, int]] = None
 			if client_message.opcode == PING:
-				opcode = PONG
+				response = (b'', PONG)
 			elif client_message.opcode == TEXT:
-				message = b'Ok from server'
-			logging.info("{} Sending response {} : {}".format(client, opcode, message))
-			client.send_message(message, opcode)
+				response = self.handle_text(client, client_message)
+			elif client_message.opcode == CLOSE:
+				response = self.handle_close(client)
+
+			if response:
+				logging.info("{} Sending response {} : {}".format(client, *response))
+				client.send_message(*response)
 		except Exception as e:
-			self.sockets.remove(client_socket)
-			del self.clients[client_socket]
-			client_socket.close()
 			if isinstance(e, ConnectionClosedError):
 				logging.info("{} closed connection".format(client, e))
+				client.state = WebSocketState.CLOSED
 			else:
 				logging.error("{} Exception handling message: {}".format(client, e))
+			self.remove_client(client_socket)
 			self.handle_exception(client_socket, e)
+
+	def handle_close(self, client: WebSocket) -> Optional[Tuple[bytes, int]]:
+		# Server should not respond to CLOSE if the Server initiated Closing Handshake
+		if client.state == WebSocketState.CLOSING:
+			client.state = WebSocketState.CLOSED
+			self.remove_client(client.socket)
+		# Server must respond to CLOSE with CLOSE
+		else:
+			client.state = WebSocketState.CLOSING
+			self.remove_client(client.socket)
+			return (b'', CLOSE)
+
+	def handle_text(self, client: WebSocket, frame: Frame) -> Tuple[bytes, int]:
+		message: bytes = b''
+		opcode: int = TEXT
+		# Temporary feature for debugging
+		if frame.payload == "close":
+			logging.debug("{} closing connection".format(client))
+			client.state = WebSocketState.CLOSING
+			message = b''
+			opcode = CLOSE
+		else:
+			message = b'Ok from server'
+		return (message, opcode)
+
+	def remove_client(self, client_socket: socket.socket):
+		self.sockets.remove(client_socket)
+		client = self.clients[client_socket]
+		del self.clients[client_socket]
+		client_socket.close()
+		logging.info("{} removed".format(client))
 
 	def handle_worker_request(self, worker: Worker, request: Request):
 		logging.info("{} Incomming new message {}".format(worker, request))
@@ -201,7 +235,7 @@ class Server(object):
 				recipients.append(self.clients_index[destination])
 		return recipients
 
-	def remove_client(self, client: Connection):
+	def old_remove_client(self, client: Connection):
 		try:
 			logging.debug("{} Acquiring lock to remove client".format(client))
 			self.lock.acquire()
