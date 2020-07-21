@@ -20,12 +20,10 @@ from errors import (
 )
 from protocol import (
 	Address,
-	Request,
 	Connection,
 	Client,
 	Worker,
 	Master,
-	create_payload,
 )
 from websocket_protocol import (
 	ConnectionClosedError,
@@ -92,7 +90,6 @@ class Server(object):
 				for notified_socket in read:
 					if notified_socket is self.socket:
 						client_socket, address = self.socket.accept()
-						#client_socket.setblocking(0)
 						self.handle_new_connection(client_socket, address)
 					else:
 						self.handle_message(notified_socket)
@@ -144,30 +141,31 @@ class Server(object):
 			elif client_message.opcode == TEXT:
 				response = self.handle_text(client, client_message)
 			elif client_message.opcode == CLOSE:
-				response = self.handle_close(client)
+				self.handle_close(client)
 
 			if response:
 				logging.info("{} Sending response {} : {}".format(client, *response))
 				client.send_message(*response)
 		except Exception as e:
 			if isinstance(e, ConnectionClosedError):
-				logging.info("{} closed connection".format(client, e))
+				logging.info("{} abnormally closed connection".format(client, e))
 				client.state = WebSocketState.CLOSED
 			else:
 				logging.error("{} Exception handling message: {}".format(client, e))
 			self.remove_client(client_socket)
 			self.handle_exception(client_socket, e)
 
-	def handle_close(self, client: WebSocket) -> Optional[Tuple[bytes, int]]:
-		# Server should not respond to CLOSE if the Server initiated Closing Handshake
+	def handle_close(self, client: WebSocket):
+		logging.info("{} Closing connection".format(client))
+		# Server initiated Close Handshake.
 		if client.state == WebSocketState.CLOSING:
 			client.state = WebSocketState.CLOSED
 			self.remove_client(client.socket)
-		# Server must respond to CLOSE with CLOSE
+		# Client initiated Close Handshake. Server must respond with CLOSE
 		else:
-			client.state = WebSocketState.CLOSING
+			client.state = WebSocketState.CLOSED
+			client.send_message(b'', CLOSE)
 			self.remove_client(client.socket)
-			return (b'', CLOSE)
 
 	def handle_text(self, client: WebSocket, frame: Frame) -> Tuple[bytes, int]:
 		message: bytes = b''
@@ -183,11 +181,19 @@ class Server(object):
 		return (message, opcode)
 
 	def remove_client(self, client_socket: socket.socket):
-		self.sockets.remove(client_socket)
-		client = self.clients[client_socket]
-		del self.clients[client_socket]
+		client = self.clients.get(client_socket)
+		if client_socket in self.clients:
+			del self.clients[client_socket]
 		client_socket.close()
+		self.sockets.remove(client_socket)
 		logging.info("{} removed".format(client))
+
+	def handle_exception(self, client_socket: socket.socket, error: Exception):
+		# TODO: add tests aswell
+		# send error response to client
+		pass
+
+	"""
 
 	def handle_worker_request(self, worker: Worker, request: Request):
 		logging.info("{} Incomming new message {}".format(worker, request))
@@ -199,11 +205,6 @@ class Server(object):
 	def handle_client_request(self, client: Client, request: Request):
 		logging.info("{} Incomming new message {}".format(client, request))
 		self.messages.put(request)
-
-	def handle_exception(self, client_socket: socket.socket, error: Exception):
-		# TODO: add tests aswell
-		# send error response to client
-		pass
 
 	def dispatch(self, request: Request):
 		recipients = self.get_recipients(request.destination, request.destination_type)
@@ -259,6 +260,8 @@ class Server(object):
 			return self.clients[client_socket]
 		elif client_socket in self.workers:
 			return self.workers[client_socket]
+
+	"""
 
 
 if __name__ == "__main__":

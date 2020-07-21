@@ -2,7 +2,7 @@ import logging
 import socket
 
 from settings import SERVER_ADDRESS
-from websocket_protocol import WebSocket, PING, TEXT
+from websocket_protocol import WebSocket, PING, TEXT, CLOSE
 
 
 def main():
@@ -24,9 +24,12 @@ def main():
 				logging.info("Pinging server")
 				ws.send_message(b'', PING)
 			else:
-				logging.info("Sending: {}".format(message))
+				logging.info("{} Sending: {}".format(ws, message))
 				ws.send_message(message.encode('utf-8'), TEXT)
 			ws.handle_data()
+	except Exception as e:
+		logging.error("{} Exception: {}".format(ws, e))
+		ws.send_message(b'', CLOSE)
 	finally:
 		s.close()
 
