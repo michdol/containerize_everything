@@ -10,11 +10,39 @@ from websocket_protocol import (
 	WebSocket,
 	WebSocketState,
 	Frame,
+	FrameMaskError,
+	WebSocketException,
 	ConnectionClosedError,
 	SocketConnectionBroken,
 	SERVER_HANDSHAKE_RESPONSE,
+	SERVER_HANDSHAKE_FAILED_RESPONSE,
 	TEXT,
+	CLOSE,
 )
+
+
+MOCK_HANDSHAKE_REQUEST = b''.join((
+	b"GET / HTTP/1.1\r\n",
+	b"Host: localhost:8002\r\n",
+	b"Connection: Upgrade\r\n",
+	b"Pragma: no-cache\r\n",
+	b"Cache-Control: no-cache\r\n",
+	b"Upgrade: websocket\r\n",
+	b"Origin: http://localhost:3000\r\n",
+	b"Sec-WebSocket-Version: 13\r\n",
+	b"Sec-WebSocket-Key: I2oRAuMYu81nPkQcA3pBKA==\r\n\r\n",
+))
+
+MOCK_INVALID_HANDSHAKE_REQUEST = b''.join((
+	b"GET / HTTP/1.1\r\n",
+	b"Host: localhost:8002\r\n",
+	b"Connection: Upgrade\r\n",
+	b"Pragma: no-cache\r\n",
+	b"Cache-Control: no-cache\r\n",
+	b"Upgrade: websocket\r\n",
+	b"Origin: http://localhost:3000\r\n",
+	b"Sec-WebSocket-Version: 13\r\n\r\n",
+))
 
 
 class FrameTest(TestCase):
@@ -297,6 +325,33 @@ class WebSocketTest(TestCase):
 		message: bytes = ws.receive_message()
 		self.assertEqual(message, b'mock payload')
 
+	def test_receive_message_socket_error(self):
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.side_effect = [b'mock', b' payload', IOError(errno.EAGAIN, "mock error")]
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		message: bytes = ws.receive_message()
+		self.assertEqual(message, b'mock payload')
+
+	def test_receive_message_socket_error_connection_closed(self):
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.side_effect = [b'mock', b' payload', IOError(errno.ECONNRESET, "mock error")]
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		with self.assertRaises(ConnectionClosedError):
+			ws.receive_message()
+
+	def test_receive_message_socket_error_other(self):
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.side_effect = [b'mock', b' payload', IOError(errno.EACCES, "mock error")]
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		with self.assertRaises(socket.error):
+			ws.receive_message()
+
 	def test_send_buffer(self):
 		address = ("0.0.0.0", 80)
 		mock_socket = mock.MagicMock()
@@ -420,3 +475,99 @@ class WebSocketTest(TestCase):
 
 		with self.assertRaises(ValueError):
 			ws.get_sec_websocket_key_from_response(incorrect_response)
+
+	def test_handle_data_handshake_not_complete(self):
+		ws = WebSocket(mock.MagicMock(), ("0.0.0.0", 80), is_client=True)
+		with self.assertRaises(WebSocketException):
+			ws.handle_data()
+
+	def test_handle_data_no_data(self):
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.return_value = None
+		ws = WebSocket(mock_socket, ("0.0.0.0", 80), is_client=True)
+		ws.handshake_complete = True
+		ret = ws.handle_data()
+		self.assertIsNone(ret)
+
+	@mock.patch("websocket_protocol.WebSocket.send_message")
+	@mock.patch("websocket_protocol.Frame.parse_frame")
+	def test_handle_data_frame_mask_error(self, mock_frame, mock_send):
+		"""
+		Expected: close frame sent and exception propagated
+		"""
+		mock_frame.side_effect = FrameMaskError("Mock exception")
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.return_value = b'mock buffer'
+		ws = WebSocket(mock_socket, ("0.0.0.0", 80), is_client=True)
+		ws.handshake_complete = True
+		with self.assertRaises(FrameMaskError):
+			ws.handle_data()
+
+		mock_send.assert_called_with(b'', CLOSE)
+
+	@mock.patch("websocket_protocol.Frame.parse_frame")
+	def test_handle_data_frame_returned(self, mock_parse_frame):
+		mock_frame = mock.MagicMock()
+		mock_parse_frame.return_value = mock_frame
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.return_value = b'mock payload'
+		ws = WebSocket(mock_socket, ("0.0.0.0", 80), is_client=True)
+		ws.handshake_complete = True
+		ret = ws.handle_data()
+		self.assertIs(ret, mock_frame)
+
+	@mock.patch("websocket_protocol.Frame.create_frame")
+	@mock.patch("websocket_protocol.WebSocket.send_buffer")
+	def test_send_message(self, mock_send, mock_create_frame):
+		mock_frame = mock.MagicMock(frame=b'mock buffer')
+		mock_create_frame.return_value = mock_frame
+		ws = WebSocket(mock.MagicMock(), ("0.0.0.0", 80), is_client=True)
+
+		ws.send_message(b'this will be disarcded anyway', TEXT)
+		mock_send.assert_called_with(b'mock buffer')
+
+	@mock.patch("websocket_protocol.WebSocket.accept_handshake")
+	@mock.patch("websocket_protocol.WebSocket.send_handshake")
+	def test_handshake(self, mock_send, mock_accept):
+		ws = WebSocket(mock.MagicMock(), ("0.0.0.0", 80), is_client=True)
+
+		ws.handshake()
+		mock_accept.assert_called()
+
+		ws.is_client = False
+		ws.handshake()
+		mock_send.assert_called()
+
+	@mock.patch("websocket_protocol.WebSocket.receive_message")
+	def test_accept_handshake(self, mock_receive):
+		mock_receive.return_value = MOCK_HANDSHAKE_REQUEST
+		mock_socket = mock.MagicMock()
+		ws = WebSocket(mock_socket, ("0.0.0.0", 80), is_client=True)
+		expected_response_key = b'VWTAUcEHWkI7yCMbenHRDkoqqY0='
+
+		ws.accept_handshake()
+
+		self.assertIn(expected_response_key, mock_socket.send.call_args[0][0])
+		self.assertTrue(ws.handshake_complete)
+		self.assertEqual(ws.state, WebSocketState.OPEN)
+
+	@mock.patch("websocket_protocol.WebSocket.receive_message")
+	def test_accept_handshake_no_data(self, mock_receive):
+		mock_receive.return_value = None
+		mock_socket = mock.MagicMock()
+		ws = WebSocket(mock_socket, ("0.0.0.0", 80), is_client=True)
+
+		with self.assertRaises(ConnectionClosedError):
+			ws.accept_handshake()
+
+	@mock.patch("websocket_protocol.WebSocket.receive_message")
+	@mock.patch("websocket_protocol.WebSocket.send_buffer")
+	def test_accept_handshake_failed(self, send_buffer, mock_receive):
+		mock_receive.return_value = MOCK_INVALID_HANDSHAKE_REQUEST
+		mock_socket = mock.MagicMock()
+		ws = WebSocket(mock_socket, ("0.0.0.0", 80), is_client=True)
+
+		with self.assertRaises(AttributeError):
+			ws.accept_handshake()
+
+		send_buffer.assert_called_with(SERVER_HANDSHAKE_FAILED_RESPONSE.encode('ascii'), send_all=True)
