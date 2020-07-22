@@ -275,7 +275,7 @@ class WebSocket(object):
 		logging.debug("Sending response {} : {!r}".format(frame, frame.payload))
 		self.send_buffer(frame.frame)
 
-	def send_buffer(self, buff: bytes, send_all: bool = False) -> Optional[bytes]:
+	def send_buffer(self, buff: bytes, send_all: bool=False) -> Optional[bytes]:
 		size = len(buff)
 		to_send = size
 		already_sent = 0
@@ -315,25 +315,26 @@ class WebSocket(object):
 		"""
 		This requires non-blocking sockets
 		"""
+		chunks = bytearray()
 		try:
-			chunks = bytearray()
 			while len(chunks) < buff:
 				chunk = self.socket.recv(buff - len(chunks))
 				logging.debug("CHUNK: {!r}".format(chunk))
 				if not chunk:
 					break
 				chunks.extend(chunk)
-			logging.info("Received {} bytes".format(len(chunks)))
-			return bytes(chunks)
 		except socket.error as e:
 			err = e.args[0]
 			if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
 				logging.debug("No more data available")
-				# Assume: whole message received, parse it
-				return bytes(chunks)
+				# Assume: whole message received, return it
+				pass
 			elif err == errno.ECONNRESET:
 				raise ConnectionClosedError("Clonnection closed")
-			raise e
+			else:
+				raise e
+		logging.info("Received {} bytes".format(len(chunks)))
+		return bytes(chunks)
 
 	def handshake(self):
 		if self.is_client:
@@ -371,6 +372,7 @@ class WebSocket(object):
 		return base64encode(sha1.digest()).strip()
 
 	def send_handshake(self):
+		# Explicitly wait for response
 		self.socket.setblocking(True)
 		raw_key = bytes(random.getrandbits(8) for _ in range(16))
 		key = base64encode(raw_key)[:-1]
@@ -411,16 +413,3 @@ class WebSocket(object):
 		hashed = self.hash_key(key)
 		logging.debug("Comparing {!r} {!r}".format(hashed, response_key))
 		return hmac.compare_digest(hashed, response_key)
-
-	def close_connection(self):
-		"""
-		https://tools.ietf.org/html/rfc6455#section-7
-
-		Server not Client should be closing the connection.
-
-		Client closing a connection is a abnormal closure except for:
-		- transport layer connection is lost
-		- message from Server is masked
-		- hashed key returned from Server during handshake is incorrect/missing
-		"""
-		pass

@@ -1,15 +1,19 @@
+import errno
 import random
 import socket
 import struct
 
+from base64 import encodebytes as base64encode
 from unittest import main, TestCase, mock
 
 from websocket_protocol import (
 	WebSocket,
 	WebSocketState,
 	Frame,
-	TEXT,
 	ConnectionClosedError,
+	SocketConnectionBroken,
+	SERVER_HANDSHAKE_RESPONSE,
+	TEXT,
 )
 
 
@@ -281,41 +285,138 @@ class WebSocketTest(TestCase):
 		ws = WebSocket(socket.socket, address, is_client=False)
 		self.assertEqual(str(ws), "WebSocket((\'0.0.0.0\', 80):0)")
 
-	"""
-	def test_handshake_client(self):
-		address = ("0.0.0.0", 80)
-		ws = WebSocket(socket.socket, address, is_client=True)
-
-		ws.accept_handshake()
-
-		self.assertTrue(ws.handshake_complete)
-		self.assertEqual(ws.state, WebSocketState.OPEN)
-	"""
-
 	def test_receive_message(self):
+		"""
+		receive_message requires research
+		"""
 		address = ("0.0.0.0", 80)
 		mock_socket = mock.MagicMock()
-		mock_socket.recv.return_value = b'mock payload'
+		mock_socket.recv.side_effect = [b'mock payload', b'']
 		ws = WebSocket(mock_socket, address, is_client=True)
 
 		message: bytes = ws.receive_message()
 		self.assertEqual(message, b'mock payload')
 
-	@mock.patch('websocket_protocol.socket.socket.recv')
-	def test_receive_message_longer_than_buffer(self, mock_socket):
+	def test_send_buffer(self):
 		address = ("0.0.0.0", 80)
 		mock_socket = mock.MagicMock()
-		mock_socket.return_value = b'payload'
+		mock_socket.send.return_value = 11
 		ws = WebSocket(mock_socket, address, is_client=True)
 
-		message: bytes = ws.receive_message(3)
-		self.assertEqual(message, b'payload')
+		buff = b'mock buffer'
+		ws.send_buffer(buff)
+		mock_socket.send.assert_called_with(b'mock buffer')
 
-	def test_receive_message_connection_closed(self):
+	def test_send_buffer_connection_broken(self):
+		"""
+		Expected: SocketConnectionBroken exception raised when no bytes have been sent
+		"""
 		address = ("0.0.0.0", 80)
 		mock_socket = mock.MagicMock()
-		mock_socket.recv.return_value = b''
+		mock_socket.send.return_value = 0
 		ws = WebSocket(mock_socket, address, is_client=True)
 
-		with self.assertRaises(ConnectionClosedError):
-			ws.receive_message()
+		buff = b'mock buffer'
+		with self.assertRaises(SocketConnectionBroken):
+			ws.send_buffer(buff)
+
+	def test_send_buffer_socket_error(self):
+		"""
+		While sending buffer EAGAIN or EWOULDBLOCK exceptions might occur
+		Expected: remaining buffer to be returned by the method
+		"""
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.send.side_effect = [5, IOError(errno.EAGAIN, "mock error")]
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		buff = b'mock buffer'
+		remaining = ws.send_buffer(buff)
+		self.assertEqual(remaining, b'buffer')
+
+	def test_send_buffer_socket_error_send_all(self):
+		"""
+		While sending buffer EAGAIN or EWOULDBLOCK exceptions might occur
+		Expected: whole buffer sent due to passing send_all=True to the method
+		"""
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.send.side_effect = [5, IOError(errno.EAGAIN, "mock error"), 6]
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		buff = b'mock buffer'
+		remaining = ws.send_buffer(buff, send_all=True)
+		self.assertIsNone(remaining)
+
+	def test_send_buffer_socket_error_propagation(self):
+		"""
+		Expected: socket exception raised if different than EAGAIN or EWOULDBLOCK
+		"""
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.send.side_effect = IOError(errno.EACCES, "mock error")
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		with self.assertRaises(IOError):
+			ws.send_buffer(b'mock buffer', send_all=True)
+
+	@mock.patch("websocket_protocol.WebSocket.compare_sec_websocket_key")
+	def test_send_handshake(self, mock_compare):
+		mock_compare.return_value = True
+
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.return_value = SERVER_HANDSHAKE_RESPONSE % b'mock hash'
+		mock_socket.send.return_value = 151
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		ws.send_handshake()
+
+		self.assertTrue(ws.handshake_complete)
+		self.assertEqual(ws.state, WebSocketState.OPEN)
+		self.assertEqual(mock_compare.call_args[0][1], b'mock hash')
+
+	@mock.patch("websocket_protocol.WebSocket.compare_sec_websocket_key")
+	def test_send_handshake_sec_websocket_key_incorrect(self, mock_compare):
+		mock_compare.return_value = False
+
+		address = ("0.0.0.0", 80)
+		mock_socket = mock.MagicMock()
+		mock_socket.recv.return_value = SERVER_HANDSHAKE_RESPONSE % b'mock hash'
+		mock_socket.send.return_value = 151
+		ws = WebSocket(mock_socket, address, is_client=True)
+
+		with self.assertRaises(ValueError):
+			ws.send_handshake()
+
+	def test_compare_sec_websocket_key(self):
+		ws = WebSocket(mock.MagicMock(), ("0.0.0.0", 80), is_client=True)
+		raw_key = b'#j\x11\x02\xe3\x18\xbb\xcdg>D\x1c\x03zA('
+		key = base64encode(raw_key)[:-1]
+
+		is_equal = ws.compare_sec_websocket_key(key, b'VWTAUcEHWkI7yCMbenHRDkoqqY0=')
+		self.assertTrue(is_equal)
+
+		is_equal = ws.compare_sec_websocket_key(key, b'VWTAUcEHWkI7yCMbenHRDkoQqY0=')
+		self.assertFalse(is_equal)
+
+	def test_hash_key(self):
+		ws = WebSocket(mock.MagicMock(), ("0.0.0.0", 80), is_client=True)
+		raw_key = b'#j\x11\x02\xe3\x18\xbb\xcdg>D\x1c\x03zA('
+		key = base64encode(raw_key)[:-1]
+		hash_ = ws.hash_key(key)
+		self.assertEqual(hash_, b'VWTAUcEHWkI7yCMbenHRDkoqqY0=')
+
+	def test_get_sec_websocket_key_from_response(self):
+		ws = WebSocket(mock.MagicMock(), ("0.0.0.0", 80), is_client=True)
+		response: bytes = SERVER_HANDSHAKE_RESPONSE % b'mock hash'
+
+		key = ws.get_sec_websocket_key_from_response(response)
+		self.assertEqual(key, b'mock hash')
+
+	def test_get_sec_websocket_key_from_response_key_missing(self):
+		ws = WebSocket(mock.MagicMock(), ("0.0.0.0", 80), is_client=True)
+		incorrect_response: bytes = b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\n\r'
+
+		with self.assertRaises(ValueError):
+			ws.get_sec_websocket_key_from_response(incorrect_response)

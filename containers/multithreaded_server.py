@@ -160,6 +160,9 @@ class Server(object):
 			self.handle_exception(client_socket, e)
 
 	def handle_close(self, client: WebSocket):
+		"""
+		https://tools.ietf.org/html/rfc6455#section-7
+		"""
 		logging.info("{} Closing connection".format(client))
 		# Server initiated Close Handshake.
 		if client.state == WebSocketState.CLOSING:

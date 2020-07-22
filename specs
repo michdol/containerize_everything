@@ -1,4 +1,10 @@
-21/07/2020 Frame refactor
+22/07/2020 WebSocket tests
+
+1. Adding tests, current coverage for websocket_protocol.py 83%
+
+---------------------------------------------------------------------------------
+
+21/07/2020 Overall refactor
 
 1. Refactored handling messages
 2. Added closing handshake
@@ -8,7 +14,7 @@
 
 ---------------------------------------------------------------------------------
 
-20/07/2020 Frame refactor
+20/07/2020 Handshake
 
 1. Fixed sending handshake
 2. Simplified WebSocket interface
@@ -16,7 +22,7 @@
 
 ---------------------------------------------------------------------------------
 
-17/07/2020 Frame refactor
+17/07/2020 Client-side websocket protocol
 
 1. Writing client side websocket protocol
 2. Comparing digests
