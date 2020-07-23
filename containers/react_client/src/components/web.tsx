@@ -16,6 +16,7 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 		const address = {host: "localhost", port: 8002};
 		this.client = new WebSocketClient(address);
 		this.debug_button = this.debug_button.bind(this);
+		this.authenticate = this.authenticate.bind(this);
 		this.updateMessage = this.updateMessage.bind(this);
 		this.state = {
 			message: ''
@@ -35,7 +36,21 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 	debug_button() {
 		console.log("sending");
 		// JSON.stringify({"username": "react client"})
-		this.client.send(this.state.message);
+		let payload = JSON.stringify({
+			"type": 4, // command
+			"payload": this.state.message,
+			"command": 1, // start job
+			"args": {1: 2, 3: 4},
+		})
+		this.client.send(payload);
+	}
+
+	authenticate() {
+		let payload = JSON.stringify({
+			"type": 1, // auth
+			"payload": "master"
+		})
+		this.client.send(payload)
 	}
 
 	updateMessage(e: any) {
@@ -50,6 +65,9 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 				</div>
 				<div>
 					<input type="text" onChange={this.updateMessage} />
+				</div>
+				<div>
+					<a onClick={this.authenticate}>auth</a>
 				</div>
 			</div>
 		)

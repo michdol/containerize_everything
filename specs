@@ -62,11 +62,24 @@ or should there be preceeding message indicating the following message will be b
 4.1 Format
 
 message = {
-	"type": "int [authentication, info, message]",
+	"type": "MessageType [authentication, info, message, command, error]",
 	"payload": "Union[bytes, str]",
 	"source": "ID",
 	"destination": "Union[ID, Group]",
-	"status": "ClientStatus[Waiting, Busy]",
+	"*status": "[if source Worker] - WorkerStatus[Waiting, Busy]",
+	"*job_name": "[if type command] - constants.JobName",
 }
 
----
+# Start test job message example
+command_message = {
+	"type": MessageType.Command,
+	"command": Command.StartJob,
+	"job_name": JobName.TestJob,
+	"args": Optional[str]
+}
+
+# Stop job message example
+command_message = {
+	"type": MessageType.Command,
+	"command": Command.StopJob,
+}

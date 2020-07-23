@@ -343,9 +343,6 @@ class WebSocket(object):
 			self.send_handshake()
 
 	def accept_handshake(self):
-		"""
-		TODO: test this on incorrect request
-		"""
 		data = self.receive_message(HANDSHAKE_HEADER_LENGTH)
 		if not data:
 			raise ConnectionClosedError("Connection has been closed")

@@ -1,4 +1,5 @@
 import errno
+import json
 import logging
 import select
 import socket
@@ -12,6 +13,7 @@ from typing import Dict, List, Tuple, Optional
 
 import settings
 
+from constants import MessageType, Command, WorkerStatus, JobName
 from websocket_protocol import (
 	Address,
 	ConnectionClosedError,
@@ -37,7 +39,8 @@ class Server(object):
 
 		self.lock = threading.Lock()
 		self.clients: Dict[socket.socket, WebSocket] = {}
-		self.clients_index: Dict[uuid.UUID, socket.socket] = {}
+		self.workers: Dict[socket.socket, WebSocket] = {}
+		self.master: Optional[WebSocket] = None
 		self.messages: queue.Queue = queue.Queue()
 		self.event = threading.Event()
 		self.main_event = threading.Event()
@@ -111,8 +114,12 @@ class Server(object):
 		error) as defined in Section 7.4.1.  (These rules might be relaxed in
 		a future specification.)
 		"""
+		client = None
 		try:
-			client = self.clients[client_socket]
+			if client_socket not in self.clients:
+				client = self.workers[client_socket]
+			else:
+				client = self.clients[client_socket]
 			client_message: Optional[Frame] = client.handle_data()
 			if not client_message:
 				return
@@ -130,6 +137,7 @@ class Server(object):
 				logging.info("{} Sending response {} : {}".format(client, *response))
 				client.send_message(*response)
 		except Exception as e:
+			raise e
 			if isinstance(e, ConnectionClosedError):
 				logging.info("{} abnormally closed connection: {}".format(client, e))
 				client.state = WebSocketState.CLOSED
@@ -157,19 +165,51 @@ class Server(object):
 		message: bytes = b''
 		opcode: int = TEXT
 		# Temporary feature for debugging
-		if frame.payload == "close":
+		client_message: dict = json.loads(frame.payload)
+		message_type = client_message["type"]
+		payload = client_message["payload"]
+		if message_type == MessageType.Authentication:
+			if payload == "worker":
+				self.workers[client.socket] = client
+				del self.clients[client.socket]
+				logging.info("{} authenticated as worker".format(client))
+			elif payload == "master":
+				self.master = client
+				logging.info("{} authenticated as master".format(client))
+		elif message_type == MessageType.Command:
+			for worker in self.workers.values():
+				print(frame.payload)
+				worker.send_message(frame.payload.encode('utf-8'), TEXT)
+				message = b'ok from server'
+		elif message_type == MessageType.Message:
+			for client in self.clients.values():
+				client.send_message(frame.payload.encode('utf-8'), TEXT)
+			message = json.dumps({
+				"type": MessageType.Message,
+				"payload": "OK"
+			}).encode('utf-8')
+		if payload == "close":
 			logging.debug("{} closing connection".format(client))
 			client.state = WebSocketState.CLOSING
 			message = b''
 			opcode = CLOSE
 		else:
-			message = b'Ok from server'
+			message = json.dumps({
+				"type": MessageType.Message,
+				"payload": "Ok from server"
+			}).encode("utf-8")
 		return (message, opcode)
 
 	def remove_client(self, client_socket: socket.socket):
 		client = self.clients.get(client_socket)
+		if not client:
+			client = self.workers.get(client_socket)
 		if client_socket in self.clients:
 			del self.clients[client_socket]
+		elif client_socket in self.workers:
+			del self.workers[client_socket]
+		if self.master and client_socket is self.master.socket:
+			self.master = None
 		client_socket.close()
 		self.sockets.remove(client_socket)
 		logging.info("{} removed".format(client))
