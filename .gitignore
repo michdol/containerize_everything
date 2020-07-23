@@ -2,5 +2,9 @@ certificates/
 containers/certificates/
 containers/__pycache__/
 containers/react_client/node_modules
+containers/react_client/yarn-error.log
+containers/react_client/npm-debug.log
 containers/.mypy*/
 *.pyc
+.coverage
+htmlcov/

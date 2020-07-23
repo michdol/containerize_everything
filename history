@@ -1,0 +1,148 @@
+23/07/2020 System specs
+
+1. Created system specs
+2. Created ClientBase
+3. Created Worker
+4. Created JobBase
+5. Implemented basic functionality of starting job
+6. Removed old, redundant files
+
+---------------------------------------------------------------------------------
+
+22/07/2020 WebSocket tests
+
+1. Adding tests, current coverage for websocket_protocol.py 100%
+
+---------------------------------------------------------------------------------
+
+21/07/2020 Overall refactor
+
+1. Refactored handling messages
+2. Added closing handshake
+3. Added WebSocketState enum
+4. Refactored receiving messages
+5. Added tests for WebSocket
+
+---------------------------------------------------------------------------------
+
+20/07/2020 Handshake
+
+1. Fixed sending handshake
+2. Simplified WebSocket interface
+3. Slightly refactored server
+
+---------------------------------------------------------------------------------
+
+17/07/2020 Client-side websocket protocol
+
+1. Writing client side websocket protocol
+2. Comparing digests
+3. Moved http related elements to separate module
+
+---------------------------------------------------------------------------------
+
+16/07/2020 Frame refactor
+
+1. Cleaned up Frame implementation
+2. Added tests for frame
+
+---------------------------------------------------------------------------------
+
+15/07/2020 Frame
+
+1. Created:
+- parsing websocket message
+- handshake
+- framing
+2. Refactored server to use websocket protocol
+
+---------------------------------------------------------------------------------
+
+14/07/2020 Websocket protocol
+
+1. Fixed bug causing clients to improperly parse messages from server
+
+Handle client message:
+after handshake
+receive 2 bytes and according to second byte either receive 1, 2 more bytes signifying payload length
+or:
+receive payload
+for now only text messages will be processed
+
+---------------------------------------------------------------------------------
+
+07/07/2020 Websocket protocol
+
+1. Basic implementation of server-side handshake and receiving message functionality
+
+---------------------------------------------------------------------------------
+
+03/07/2020 Adapt to browsers
+
+Objective:
+Develop mechanism to determine incoming message's protocol
+Switch? to custom protocol after accepting connection
+
+---------------------------------------------------------------------------------
+
+02/07/2020 Client base
+
+1. Created ClientBase
+Base class for all clients (Client/Worker/Master)
+Common features:
+- receive / send messages - threads waiting for incomming / outgoing messages
+
+Worker:
+- Run up to 1 job on separate thread
+- On receive message, parse command and act accordingly
+
+Master:
+- send commands to server
+2. Created Client
+- temporarily sending test start work command
+3. Created Worker
+- added starting/stopping job and sending results
+
+TODO:
+- check shutting down threads
+
+---------------------------------------------------------------------------------
+
+01/07/2020 Unit tests
+
+1. Tests:
+	- authenticate
+	- handle_new_connection
+	- dispatch
+	- remove_client
+2. Functionalities:
+	- dispach
+	- remove_client
+3. Added lock for synchronizing threads for adding and removing clients
+
+---------------------------------------------------------------------------------
+
+30/06/2020 Creating broadcasting feature
+
+1. Created simple worker script for debugging broadcasting
+2. Added MessageType.INITIAL_CONNECTION
+3. Added separate thread for broadcast subroutine
+4. Separated destination_type and destination in the header
+5. Created clients_index - id: socket map
+6. Created protocol_tests.py
+7. Created multithreaded_server_tests.py
+
+Fixed:
+- Bug causing server block on receiving message from the first client
+
+---------------------------------------------------------------------------------
+
+29/06/2020 Creating and parsing payload
+
+1. Refactored creating header:
+- Created DestinationType - a single character for client/group/server to work as a prefix
+	destination field of the header
+- Changed header - message separator from '\n' to ' ' (single space)
+- Adjusted HEADER_LENGTH to 100 characters - includes the above space
+
+Implementing debug client script

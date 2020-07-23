@@ -1,34 +1,26 @@
-import uuid
-
 from enum import Enum, IntEnum
 
 
-class MessageType(IntEnum):
-	INITIAL_CONNECTION = 0
-	INFO = 1
-	MESSAGE = 2
-	COMMAND = 3
-	JOB_RESULT = 4
-	ERROR = 9
-
-
-class DestinationType(str, Enum):
-	SERVER = "s"
-	CLIENT = "c"
-	GROUP = "g"
-
-
-class ResponseStatus(IntEnum):
-	# Success
-	CONNECTION_ACCEPTED = 0
-	# Exception
-	CONNECTION_REFUSED = 10
-	# Other
-	UNKNOWN = 20
-
-
 class WorkerStatus(IntEnum):
-	NOT_CONNECTED = 0
-	IDLE = 1
-	WORKING = 2
-	ERROR = 9
+	Waiting = 1
+	Busy = 2
+	Unavailable = 3
+
+
+class MessageType(IntEnum):
+	Authentication = 1
+	Info = 2
+	Message = 3
+	Command = 4
+	Error = 5
+
+
+class Command(IntEnum):
+	StartJob = 1
+	StopJob = 2
+	PauseJob = 3
+	Disconnect = 4
+
+
+class JobName(Enum):
+	TestJob = "test_job"

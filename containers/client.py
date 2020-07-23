@@ -1,31 +1,9 @@
-import socket
-import logging
+from typing import Union
 
-import settings
-
-from custom_types import Address
+from client_base import ClientBase
 
 
-class Client(object):
-  def __init__(self, socket, address):
-    self.socket: socket.socket = socket
-    self.address: Address = address
-    self.raw_header: bytes = b''
-    self.raw_username: bytes = b''
-    self.header: str = ''
-    self.username: str = ''
-
-  def __str__(self) -> str:
-    return "Client({}:{})".format(*self.address)
-
-  def set_header(self, header):
-    self.raw_header = header
-    self.header = header.decode("utf-8")
-
-  def set_username(self, username):
-    self.raw_username = username
-    self.username = username.decode("utf-8")
-
-  def is_master(self) -> bool:
-    logging.debug("is_master(): {}, {}".format(self.username, settings.CLIENT_CONTAINER_NAME))
-    return self.username == settings.CLIENT_CONTAINER_NAME
+class Client(ClientBase):
+	# Client is not allowed to send any messages
+	def on_message(self, message: Union[str, bytes], opcode: int):
+		pass

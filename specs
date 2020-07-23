@@ -1,61 +1,85 @@
-02/07/2020 Client base
+Server's client management
+managing workers:
+- maintain worker's status [waiting, busy, error]
 
-1. Created ClientBase
-Base class for all clients (Client/Worker/Master)
-Common features:
-- receive / send messages - threads waiting for incomming / outgoing messages
+Consider how all the messages will be broadcasted.
+- all messages through one channel (client will be responsible for displaying them)
 
-Worker:
-- Run up to 1 job on separate thread
-- On receive message, parse command and act accordingly
+Add pinging clients if there is no message from them every _PERIOD seconds
 
-Master:
-- send commands to server
-2. Created Client
-- temporarily sending test start work command
-3. Created Worker
-- added starting/stopping job and sending results
 
-TODO:
-- check shutting down threads
+1. The command
+Start specific job
+Stop specific job
+Stop all jobs
 
----------------------------------------------------------------------------------
+job_name: str
+workers_count: int [optional]
 
-01/07/2020 Unit tests
+1.1 command comes from master and is sent to destination (specific workers or all of them)
+Always check for available workers.
+If available workers are not enough, schedule the job in a Queue, don't start any next job until
+there is enough workers, then run the job.
 
-1. Tests:
-	- authenticate
-	- handle_new_connection
-	- dispatch
-	- remove_client
-2. Functionalities:
-	- dispach
-	- remove_client
-3. Added lock for synchronizing threads for adding and removing clients
+---
 
----------------------------------------------------------------------------------
+2. The job
+Performed only by Workers, results sent to all the clients.
 
-30/06/2020 Creating broadcasting feature
+2.1 Parameters
+name: str
 
-1. Created simple worker script for debugging broadcasting
-2. Added MessageType.INITIAL_CONNECTION
-3. Added separate thread for broadcast subroutine
-4. Separated destination_type and destination in the header
-5. Created clients_index - id: socket map
-6. Created protocol_tests.py
-7. Created multithreaded_server_tests.py
+required number of workers: int [minimal predefined, optionally specified by command]
+- single or multiple workers
 
-Fixed:
-- Bug causing server block on receiving message from the first client
+2.2 Types of job
+- challenge: compare work time or anything you can compare between results from different workers
+- heavy: distribute task between workers
+- regular: nothing specific, just work
 
----------------------------------------------------------------------------------
+---
 
-29/06/2020 Creating and parsing payload
+3. Users
+3.1 Client
+Receives messages only
 
-1. Refactored creating header:
-- Created DestinationType - a single character for client/group/server to work as a prefix
-	destination field of the header
-- Changed header - message separator from '\n' to ' ' (single space)
-- Adjusted HEADER_LENGTH to 100 characters - includes the above space
+3.2 Master
+Sends commands and receives messages
 
-Implementing debug client script
+3.3 Worker
+Receives commands
+Sends job results when results are ready
+Sends self-info (status, CPU usage, memory usage, etc.) every _PERIOD seconds
+
+---
+
+4. Message
+Sent over the channel
+
+* In case of sending images, should client distinguish the difference between str and bytes
+or should there be preceeding message indicating the following message will be bytes
+
+4.1 Format
+
+message = {
+	"type": "MessageType [authentication, info, message, command, error]",
+	"payload": "Union[bytes, str]",
+	"source": "ID",
+	"destination": "Union[ID, Group]",
+	"*status": "[if source Worker] - WorkerStatus[Waiting, Busy]",
+	"*job_name": "[if type command] - constants.JobName",
+}
+
+# Start test job message example
+command_message = {
+	"type": MessageType.Command,
+	"command": Command.StartJob,
+	"job_name": JobName.TestJob,
+	"args": Optional[str]
+}
+
+# Stop job message example
+command_message = {
+	"type": MessageType.Command,
+	"command": Command.StopJob,
+}
