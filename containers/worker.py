@@ -234,3 +234,24 @@ if __name__ == "__main__":
 	else:
 		client = Worker(SERVER_ADDRESS, "worker")
 	client.run()
+
+
+
+class ClientBase(object):
+	def __init__(self):
+		self.id: uuid.UUID = None
+		self.group: uuid.UUID = None
+
+
+class Worker(ClientBase):
+	def __init__(self):
+		super()
+		self.status: WorkerStatus = None
+
+
+class Client(ClientBase):
+	pass
+
+
+class Master(ClientBase):
+	pass

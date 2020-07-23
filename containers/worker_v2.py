@@ -21,6 +21,9 @@ def main():
 			if message == "ping":
 				logging.info("Pinging server")
 				ws.send_message(b'', PING)
+			elif message == "close":
+				logging.info("Closing connection gracefully")
+				ws.send_message(b'', CLOSE)
 			else:
 				logging.info("{} Sending: {}".format(ws, message))
 				ws.send_message(message.encode('utf-8'), TEXT)

@@ -300,11 +300,11 @@ class WebSocket(object):
 		if self.handshake_complete:
 			data: bytes = self.receive_message(BUFFER_LENGTH)
 			if not data:
-				return
+				return None
 			try:
 				frame: Frame = Frame.parse_frame(data, is_client_frame=self.is_client)
 			except FrameMaskError as e:
-				logging.error("Closing connection with {} - {}".format(self, e.args[0]))
+				logging.debug("Closing connection with {} - {}".format(self, e.args[0]))
 				self.send_message(b'', CLOSE)
 				raise e
 			logging.debug("Parsed message {} : {!r}".format(frame, frame.payload))
@@ -333,7 +333,7 @@ class WebSocket(object):
 				raise ConnectionClosedError("Clonnection closed")
 			else:
 				raise e
-		logging.info("Received {} bytes".format(len(chunks)))
+		logging.debug("Received {} bytes".format(len(chunks)))
 		return bytes(chunks)
 
 	def handshake(self):

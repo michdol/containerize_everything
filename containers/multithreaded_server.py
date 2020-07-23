@@ -10,22 +10,10 @@ import queue
 
 from typing import Dict, List, Tuple, Optional
 
-from constants import (
-	MessageType,
-	DestinationType,
-)
-from errors import (
-	AuthenticationError,
-	MasterAlreadyConnectedError,
-)
-from protocol import (
-	Address,
-	Connection,
-	Client,
-	Worker,
-	Master,
-)
+import settings
+
 from websocket_protocol import (
+	Address,
 	ConnectionClosedError,
 	Frame,
 	WebSocket,
@@ -34,13 +22,6 @@ from websocket_protocol import (
 	PONG,
 	TEXT,
 	CLOSE
-)
-from settings import (
-	CLIENTS,
-	WORKERS,
-	HEADER_LENGTH,
-	DUMMY_UUID,
-	SERVER_ADDRESS,
 )
 
 
@@ -55,10 +36,8 @@ class Server(object):
 		self.sockets: List[socket.socket] = [self.socket]
 
 		self.lock = threading.Lock()
-		self.master: Optional[Master] = None
-		self.clients: Dict[socket.socket, Connection] = {}
+		self.clients: Dict[socket.socket, WebSocket] = {}
 		self.clients_index: Dict[uuid.UUID, socket.socket] = {}
-		self.workers: Dict[socket.socket, Worker] = {}
 		self.messages: queue.Queue = queue.Queue()
 		self.event = threading.Event()
 		self.main_event = threading.Event()
@@ -134,10 +113,10 @@ class Server(object):
 		"""
 		try:
 			client = self.clients[client_socket]
-			client_message: Frame = client.handle_data()
+			client_message: Optional[Frame] = client.handle_data()
 			if not client_message:
 				return
-			logging.info("{} Received {} : {}".format(client, client_message, client_message.payload))
+			logging.info("{} Received {} : {!r}".format(client, client_message, client_message.payload))
 
 			response: Optional[Tuple[bytes, int]] = None
 			if client_message.opcode == PING:
@@ -152,7 +131,7 @@ class Server(object):
 				client.send_message(*response)
 		except Exception as e:
 			if isinstance(e, ConnectionClosedError):
-				logging.info("{} abnormally closed connection".format(client, e))
+				logging.info("{} abnormally closed connection: {}".format(client, e))
 				client.state = WebSocketState.CLOSED
 			else:
 				logging.error("{} Exception handling message: {}".format(client, e))
@@ -200,82 +179,12 @@ class Server(object):
 		# send error response to client
 		pass
 
-	"""
-
-	def handle_worker_request(self, worker: Worker, request: Request):
-		logging.info("{} Incomming new message {}".format(worker, request))
-		self.messages.put(request)
-
-	def handle_master_request(self, request: Request):
-		logging.info("{} Incomming new message {}".format(self.master, request))
-
-	def handle_client_request(self, client: Client, request: Request):
-		logging.info("{} Incomming new message {}".format(client, request))
-		self.messages.put(request)
-
-	def dispatch(self, request: Request):
-		recipients = self.get_recipients(request.destination, request.destination_type)
-		payload = request.payload()
-		logging.info("Sending {} to {} clients".format(request, len(recipients)))
-		sent_count = 0
-		for client_socket in recipients:
-			try:
-				client_socket.send(payload)
-				sent_count += 1
-			except Exception as e:
-				client = self.identify_client(client_socket)
-				logging.error("Failed to send {} to {}, error: {}".format(request, client, e))
-				self.remove_client(client)
-		logging.info("Successfully sent {} to {} clients".format(request, sent_count))
-
-	def get_recipients(self, destination: uuid.UUID, destination_type: DestinationType) -> List[socket.socket]:
-		recipients = []
-		if destination_type == DestinationType.GROUP:
-			if destination == CLIENTS:
-				recipients = list(self.clients.keys())
-			elif destination == WORKERS:
-				recipients = list(self.workers.keys())
-		elif destination_type == DestinationType.SERVER:
-			# Do nothing for now
-			pass
-		else:
-			if destination in self.clients_index:
-				recipients.append(self.clients_index[destination])
-		return recipients
-
-	def old_remove_client(self, client: Connection):
-		try:
-			logging.debug("{} Acquiring lock to remove client".format(client))
-			self.lock.acquire()
-			if isinstance(client, Client) or isinstance(client, Master):
-				del self.clients[client.socket]
-				del self.clients_index[client.id]
-			elif isinstance(client, Worker):
-				del self.workers[client.socket]
-			if self.master and client is self.master:
-				logging.info("{} Master has been removed".format(client))
-				self.master = None
-			self.sockets.remove(client.socket)
-		except Exception as e:
-			logging.error("{} Error while removing client {}".format(client, e))
-		finally:
-			logging.debug("{} Releasing lock after removal".format(client))
-			self.lock.release()
-
-	def identify_client(self, client_socket: socket.socket) -> Connection:
-		if client_socket in self.clients:
-			return self.clients[client_socket]
-		elif client_socket in self.workers:
-			return self.workers[client_socket]
-
-	"""
-
 
 if __name__ == "__main__":
 	format_ = "%(asctime)s %(levelname)s: %(message)s"
 	logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
 
-	server = Server(*SERVER_ADDRESS)
+	server = Server(*settings.SERVER_ADDRESS)
 	try:
 		server.serve_forever()
 	except KeyboardInterrupt:
