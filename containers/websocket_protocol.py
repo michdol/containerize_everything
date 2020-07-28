@@ -319,21 +319,22 @@ class WebSocket(object):
 		try:
 			while len(chunks) < buff:
 				chunk = self.socket.recv(buff - len(chunks))
-				logging.debug("CHUNK: {!r}".format(chunk))
 				if not chunk:
 					break
+				logging.debug("CHUNK: {!r}".format(chunk))
 				chunks.extend(chunk)
 		except socket.error as e:
 			err = e.args[0]
 			if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
-				logging.debug("No more data available")
 				# Assume: whole message received, return it
 				pass
 			elif err == errno.ECONNRESET:
 				raise ConnectionClosedError("Clonnection closed")
 			else:
 				raise e
-		logging.debug("Received {} bytes".format(len(chunks)))
+		bytes_count = len(chunks)
+		if bytes_count > 0:
+			logging.debug("Received {} bytes".format(bytes_count))
 		return bytes(chunks)
 
 	def handshake(self):

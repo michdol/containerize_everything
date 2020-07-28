@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple, Optional
 import settings
 
 from constants import MessageType, Command, WorkerStatus, JobName
+from server_side_client import ClientWebSocketBase, Worker, ClientError
 from websocket_protocol import (
 	Address,
 	ConnectionClosedError,
@@ -25,10 +26,6 @@ from websocket_protocol import (
 	TEXT,
 	CLOSE
 )
-
-
-class ClientError(Exception):
-	pass
 
 
 class Server(object):
@@ -91,7 +88,7 @@ class Server(object):
 
 	def handle_new_connection(self, client_socket: socket.socket, address: Address):
 		try:
-			client = WebSocket(client_socket, address, is_client=True)
+			client = ClientWebSocketBase(client_socket, address, True, self)
 			client.handshake()
 			if client.handshake_complete:
 				logging.info("{} Handshake complete".format(client))
@@ -101,11 +98,12 @@ class Server(object):
 			else:
 				logging.info("{} handshake failed".format(address))
 		except Exception as e:
+			raise e
 			client_socket.close()
 			logging.error("Exception handling new connection: {}".format(e))
 			self.handle_exception(client_socket, e)
 
-	def tmp_handle_message(self, client_socket: socket.socket):
+	def handle_message(self, client_socket: socket.socket):
 		"""
 		https://tools.ietf.org/html/rfc6455#section-5.1
 
@@ -120,64 +118,9 @@ class Server(object):
 		error) as defined in Section 7.4.1.  (These rules might be relaxed in
 		a future specification.)
 		"""
-		client = None
 		try:
-			if client_socket not in self.clients:
-				client = self.workers[client_socket]
-			else:
-				client = self.clients[client_socket]
-			client_message: Optional[Frame] = client.handle_data()
-			if not client_message:
-				return
-			logging.info("{} Received {} : {!r}".format(client, client_message, client_message.payload))
-
-			response: Optional[Tuple[bytes, int]] = None
-			if client_message.opcode == PING:
-				response = (b'', PONG)
-			elif client_message.opcode == TEXT:
-				response = self.handle_text(client, client_message)
-			elif client_message.opcode == CLOSE:
-				self.handle_close(client)
-
-			if response:
-				logging.info("{} Sending response {} : {}".format(client, *response))
-				client.send_message(*response)
-		except Exception as e:
-			raise e
-			if isinstance(e, ConnectionClosedError):
-				logging.info("{} abnormally closed connection: {}".format(client, e))
-				client.state = WebSocketState.CLOSED
-			else:
-				logging.error("{} Exception handling message: {}".format(client, e))
-			self.remove_client(client_socket)
-			self.handle_exception(client_socket, e)
-
-	def handle_message(self, client_socket: socket.socket):
-		try:
-			client: Optional[WebSocket] = None
-			handler = None
-			if client_socket in self.workers:
-				client = self.workers[client_socket]
-				handler = self.handle_worker_message
-			elif self.master and client_socket is self.master.socket:
-				logging.info("Master - {}".format(client))
-				client = self.master
-				handler = self.handle_master_message
-			elif client_socket in self.clients:
-				client = self.clients[client_socket]
-				handler = self.handle_client_message
-
-			client_message: Optional[Frame] = client.handle_data()
-			if not client_message:
-				return
-			logging.info("{} Received {} : {!r}".format(client, client_message, client_message.payload))
-			response: Optional[Tuple[bytes, int]] = None
-			if client_message.opcode == PING:
-				response = (b'', PONG)
-			elif client_message.opcode == CLOSE:
-				self.handle_close(client)
-			else:
-				response = handler(client, client_message)
+			client = self.clients[client_socket]
+			response = client.handle_message()
 
 			if response:
 				logging.info("{} Sending response {} : {}".format(client, *response))
@@ -195,45 +138,6 @@ class Server(object):
 			self.remove_client(client_socket)
 			self.handle_exception(client_socket, e)
 
-	def handle_worker_message(self, worker: WebSocket, frame: Frame):
-		worker_message: dict = json.loads(frame.payload)
-		message_type = worker_message["type"]
-		if message_type == MessageType.JobResults:
-			self.broadcast_message(frame.payload.encode('utf-8'))
-		elif message_type == MessageType.Error:
-			logging.warning("{} error message: {}".format(worker, worker_message))
-
-	def handle_master_message(self, master: WebSocket, frame: Frame):
-		response_payload: str = ''
-		type_ = MessageType.Message
-		opcode: int = TEXT
-		client_message: dict = json.loads(frame.payload)
-		message_type = client_message["type"]
-		payload = client_message["payload"]
-
-		if message_type == MessageType.Command:
-			self.parse_command(client_message)
-			self.handle_command(frame.payload.encode('utf-8'))
-			response_payload = "Running command: '%s'" % client_message["payload"]
-		elif message_type == MessageType.Message:
-			self.broadcast_message(frame.payload.encode('utf-8'))
-			response_payload = 'ok'
-		response: bytes = self.generate_response(type_=MessageType.Message, payload=response_payload)
-		return (response, opcode)
-
-	def parse_command(self, client_payload: dict):
-		# Dummy parsing
-		# Probably move the validation to job?
-		job_name = client_payload.get("payload")
-		if not job_name:
-			raise ClientError("Argument 'payload' should contains job's name")
-		if job_name != "test_job":
-			raise ClientError("Job '{}' doesn't exist".format(job_name))
-		dummy_job = {"required_workers": 1}
-		requested_workers = client_payload.get("required_workers", 1)
-		if requested_workers < dummy_job["required_workers"]:
-			raise ClientError("Invalid parameter 'required_workers'")
-
 	def handle_command(self, payload: bytes):
 		"""
 		TODO: Append parsed command with arguments to send_queue
@@ -245,7 +149,7 @@ class Server(object):
 		}
 		"""
 		# TMP implementation
-		workers = self.workers.values()
+		workers = [worker for worker in self.clients.values() if isinstance(worker, Worker)]
 		logging.info("Sending command to {} workers".format(len(workers)))
 		for worker in workers:
 			worker.send_message(payload, TEXT)
@@ -255,42 +159,12 @@ class Server(object):
 		Append message to send_queue
 		"""
 		# TMP implementation
-		clients = self.clients.values()
+		clients = [client for client in self.clients.values() if client.is_recipient]
 		logging.info("Sending message to {} clients".format(len(clients)))
 		for client in clients:
 			client.send_message(payload, TEXT)
 
-	def handle_client_message(self, client: WebSocket, frame: Frame):
-		response: bytes = b''
-		opcode: int = TEXT
-		client_message: dict = json.loads(frame.payload)
-		message_type = client_message["type"]
-		payload = client_message["payload"]
-
-		if message_type == MessageType.Authentication:
-			self.authenticate_client(client, payload)
-			response = self.generate_response(type_=MessageType.Message, payload="Ok")
-		# To debug closing initiated from client.
-		elif message_type == MessageType.Message and payload == "close":
-			logging.info("{} closing connection".format(client))
-			client.state = WebSocketState.CLOSING
-			opcode = CLOSE
-		else:
-			payload = "You have no power here"
-			response = self.generate_response(type_=MessageType.Error, payload=payload)
-		return (response, opcode)
-
-	def authenticate_client(self, client: WebSocket, payload: str):
-		# TODO: dummy authentication
-		if payload == "worker":
-			self.workers[client.socket] = client
-			del self.clients[client.socket]
-			logging.info("{} Authenticated as worker".format(client))
-		elif payload == "master":
-			self.master = client
-			logging.info("{} Authenticated as master".format(client))
-
-	def generate_response(self, type_: MessageType, payload: str):
+	def generate_response(self, type_: MessageType, payload: str) -> bytes:
 		response = {
 			"type": type_,
 			"payload": payload,

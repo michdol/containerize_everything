@@ -41,31 +41,31 @@ class Worker(ClientBase):
 	def handle_command(self, message_json: dict):
 		error_reason: str = ""
 		try:
-				command = message_json["command"]
-				logging.debug("Handling command: %s" % command)
+			command = message_json["command"]
+			logging.debug("Handling command: %s" % command)
 
-				if command == Command.StartJob:
-					job_name = message_json["payload"]
-					if self.status != WorkerStatus.Waiting:
-						error_reason = "Worker status busy; cannot start '%s'" % job_name
-						raise Exception(error_reason)
+			if command == Command.StartJob:
+				job_name = message_json["payload"]
+				if self.status != WorkerStatus.Waiting:
+					error_reason = "Worker status busy; cannot start '%s'" % job_name
+					raise Exception(error_reason)
 
-					handler = self.__command_handlers[job_name]
-					job_kwargs = {
-						"event": self.job_event,
-						"results_queue": self.send_queue,
-						"send_message": self.send_message
-					}
-					job_kwargs.update(message_json["args"])
-					self.job_thread = handler(kwargs=job_kwargs)
-					self.status = WorkerStatus.Busy
-					self.job_thread.start()
+				handler = self.__command_handlers[job_name]
+				job_kwargs = {
+					"event": self.job_event,
+					"results_queue": self.send_queue,
+					"send_message": self.send_message
+				}
+				job_kwargs.update(message_json["args"])
+				self.job_thread = handler(kwargs=job_kwargs)
+				self.status = WorkerStatus.Busy
+				self.job_thread.start()
 
-				elif command == Command.StopJob:
-					if self.status != WorkerStatus.Busy and not self.job_thread:
-						raise Exception("No job currently running")
-					if not self.job_event.is_set():
-						self.job_event.set()
+			elif command == Command.StopJob:
+				if self.status != WorkerStatus.Busy and not self.job_thread:
+					raise Exception("No job currently running")
+				if not self.job_event.is_set():
+					self.job_event.set()
 		except Exception as e:
 			logging.error("Exception handling command: {}".format(e))
 			if error_reason:
@@ -95,7 +95,7 @@ class Worker(ClientBase):
 
 if __name__ == "__main__":
 	format_ = "%(asctime)s %(levelname)s: %(message)s"
-	logging.basicConfig(format=format_, level=logging.INFO, datefmt="%H:%M:%S")
+	logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
 
 	w = Worker()
 	w.run()
