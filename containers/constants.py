@@ -12,7 +12,8 @@ class MessageType(IntEnum):
 	Info = 2
 	Message = 3
 	Command = 4
-	Error = 5
+	JobResults = 5
+	Error = 9
 
 
 class Command(IntEnum):

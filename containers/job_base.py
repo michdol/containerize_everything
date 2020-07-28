@@ -29,7 +29,7 @@ class JobBase(threading.Thread):
 class TestJob(JobBase):
 	def work(self):
 		payload = json.dumps({
-			"type": MessageType.Message,
+			"type": MessageType.JobResults,
 			"payload": "mock results"
 		}).encode('utf-8')
 		self.send_message(payload, TEXT)
