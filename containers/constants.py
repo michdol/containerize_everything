@@ -21,7 +21,3 @@ class Command(IntEnum):
 	StopJob = 2
 	PauseJob = 3
 	Disconnect = 4
-
-
-class JobName(Enum):
-	TestJob = "test_job"

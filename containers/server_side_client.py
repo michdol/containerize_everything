@@ -7,7 +7,11 @@ from typing import Tuple, Optional
 from constants import (
 	MessageType
 )
+from custom_types import (
+	ServerResponse
+)
 from websocket_protocol import (
+	Address,
 	WebSocket,
 	WebSocketState,
 	Frame,
@@ -25,9 +29,6 @@ class ClientError(Exception):
 class AuthenticationError(ClientError):
 	pass
 
-
-ServerResponse = Tuple[bytes, int]
-Address = Tuple[str, int]
 
 class ClientWebSocketBase(WebSocket):
 	def __init__(self, socket: socket.socket, address: Address, is_client: bool, server: object):
@@ -75,11 +76,11 @@ class ClientWebSocketBase(WebSocket):
 	def authentication_handler(self, message: dict):
 		payload = message["payload"]
 		if payload == "worker":
-			class_ = Worker
+			class_ = WorkerWebSocket
 		elif payload == "master":
-			class_ = Master
+			class_ = MasterWebSocket
 		elif payload == "client":
-			class_ = Client
+			class_ = ClientWebSocket
 		else:
 			raise ClientError("Authentication failed, consider closing connection")
 		client = class_(self.socket, self.address, True, self.server)
@@ -124,7 +125,7 @@ class ClientWebSocketBase(WebSocket):
 		return json.dumps(response).encode('utf-8')
 
 
-class Client(ClientWebSocketBase):
+class ClientWebSocket(ClientWebSocketBase):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		self._handlers[MessageType.Message] = self.message_handler
@@ -150,7 +151,7 @@ class Client(ClientWebSocketBase):
 		return response, opcode
 
 
-class Master(ClientWebSocketBase):
+class MasterWebSocket(ClientWebSocketBase):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		self._handlers[MessageType.Command] = self.command_handler
@@ -164,7 +165,7 @@ class Master(ClientWebSocketBase):
 		return True
 
 	def command_handler(self, message: dict):
-		job_name = message.get("payload")
+		job_name = message.get("name")
 		if not job_name:
 			raise ClientError("Argument 'payload' should contains job's name")
 		if job_name != "test_job":
@@ -184,7 +185,7 @@ class Master(ClientWebSocketBase):
 		return response
 
 
-class Worker(ClientWebSocketBase):
+class WorkerWebSocket(ClientWebSocketBase):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		self._handlers[MessageType.JobResults] = self.job_results_handler

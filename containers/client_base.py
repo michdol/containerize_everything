@@ -88,9 +88,9 @@ class ClientBase(object):
 				self.server.send_message(b'', CLOSE)
 			self.server.state = WebSocketState.CLOSED
 			return
-		self.on_message(message.payload, message.opcode)
+		self.on_message(json.loads(message.payload))
 
-	def on_message(self, message: Union[str, bytes], opcode: int):
+	def on_message(self, message: dict):
 		pass
 
 	def try_close_connection(self):
@@ -107,3 +107,6 @@ class ClientBase(object):
 			self.server.send_message(b'', CLOSE)
 		except Exception as e:
 			logging.error("Error while trying to close connection: {}".format(e))
+
+	def send_message(self, message: bytes, opcode: int):
+		self.send_queue.put((message, opcode))

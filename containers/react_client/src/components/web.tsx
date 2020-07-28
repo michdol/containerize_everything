@@ -48,7 +48,7 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 		console.log("sending");
 		let payload = JSON.stringify({
 			"type": 4, // command
-			"payload": "test_job",
+			"name": "test_job",
 			"command": 1, // start job
 			"args": {1: 2, 3: 4},
 		})
