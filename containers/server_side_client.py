@@ -45,10 +45,6 @@ class ClientWebSocketBase(WebSocket):
 			MessageType.Error: self.error_handler,
 		}
 
-	@property
-	def is_recipient(self) -> bool:
-		return False
-
 	def handle_message(self):
 		frame: Optional[Frame] = self.handle_data()
 		if not frame:
@@ -69,7 +65,7 @@ class ClientWebSocketBase(WebSocket):
 		try:
 			handler = self._handlers[MessageType(message_type)]
 		except (KeyError, ValueError):
-			raise ClientError("Unknown message type %d" % message_type)
+			raise ClientError("Invalid message type %d" % message_type)
 
 		return handler(client_message)
 
@@ -132,10 +128,6 @@ class ClientWebSocket(ClientWebSocketBase):
 
 	def __str__(self) -> str:
 		return "Client({address}:{state})".format(address=self.address, state=self.state)
-
-	@property
-	def is_recipient(self):
-		return True
 	
 	def message_handler(self, message: dict):
 		opcode: int = TEXT
@@ -160,16 +152,12 @@ class MasterWebSocket(ClientWebSocketBase):
 	def __str__(self) -> str:
 		return "Master({address}:{state})".format(address=self.address, state=self.state)
 
-	@property
-	def is_recipient(self):
-		return True
-
 	def command_handler(self, message: dict):
 		job_name = message.get("name")
 		if not job_name:
 			raise ClientError("Argument 'payload' should contains job's name")
-		if job_name != "test_job":
-			raise ClientError("Job '{}' doesn't exist".format(job_name))
+		# if job_name != "test_job":
+		# 	raise ClientError("Job '{}' doesn't exist".format(job_name))
 		dummy_job = {"required_workers": 1}
 		requested_workers = message.get("required_workers", 1)
 		if requested_workers < dummy_job["required_workers"]:

@@ -17,6 +17,7 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 		this.client = new WebSocketClient(address);
 		this.debug_button = this.debug_button.bind(this);
 		this.start_test_job = this.start_test_job.bind(this);
+		this.start_word_counter= this.start_word_counter.bind(this);
 		this.authenticate = this.authenticate.bind(this);
 		this.close = this.close.bind(this);
 		this.updateMessage = this.updateMessage.bind(this);
@@ -55,6 +56,20 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 		this.client.send(payload);
 	}
 
+	start_word_counter() {
+		console.log("sending");
+		let payload = JSON.stringify({
+			"type": 4, // command
+			"name": "word_counter",
+			"command": 1, // start job
+			"args": {
+				"url": "https://www.bbc.com",
+				"word": "coronavirus"
+			},
+		})
+		this.client.send(payload);
+	}
+
 	authenticate() {
 		let payload = JSON.stringify({
 			"type": 1, // auth
@@ -83,6 +98,9 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 				</div>
 				<div>
 					<a onClick={this.start_test_job}>test_job</a>
+				</div>
+				<div>
+					<a onClick={this.start_word_counter}>word_counter</a>
 				</div>
 				<div>
 					<input type="text" onChange={this.updateMessage} />

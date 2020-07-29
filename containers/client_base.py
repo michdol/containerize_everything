@@ -53,6 +53,7 @@ class ClientBase(object):
 					self.server.send_message(message, opcode)
 				self.main_loop()
 		except Exception as e:
+			raise e
 			logging.error("Exception in main loop: {}".format(e))
 		finally:
 			self.is_running = False
@@ -110,3 +111,10 @@ class ClientBase(object):
 
 	def send_message(self, message: bytes, opcode: int):
 		self.send_queue.put((message, opcode))
+
+	def respond_with_error(self, reason: str):
+		errror_message: bytes = json.dumps({
+			"type": MessageType.Error,
+			"payload": reason,
+		}).encode('utf-8')
+		self.send_message(errror_message, TEXT)
