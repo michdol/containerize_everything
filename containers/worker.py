@@ -1,6 +1,7 @@
-import json
+import datetime
 import logging
 import threading
+import time
 import queue
 
 from typing import Optional, Union
@@ -26,6 +27,12 @@ class Worker(ClientBase):
 		WordCounterJob.Name: WordCounterJob,
 	}
 
+	__status_text = {
+		WorkerStatus.Waiting: "waiting",
+		WorkerStatus.Busy: "busy",
+		WorkerStatus.Unavailable: "unavailable",
+	}
+
 	def __init__(self):
 		super().__init__()
 		self.job_thread: Optional[threading.Thread] = None
@@ -34,6 +41,7 @@ class Worker(ClientBase):
 		self.job_event: threading.Event = threading.Event()
 		self.results_queue: queue.Queue = queue.Queue()
 		self.client_type: str = 'worker'
+		self.last_info_sent: float = time.time()
 
 	def __str__(self) -> str:
 		return "Worker(Python)"
@@ -45,13 +53,27 @@ class Worker(ClientBase):
 				self.job_thread = None
 			self.status = WorkerStatus.Waiting
 			self.job_event.clear()
+
+		# Send job results if present
 		if not self.results_queue.empty():
 			result = self.results_queue.get()
-			message = json.dumps({
+			message: dict = {
 				"type": MessageType.JobResults,
 				"payload": result
-			}).encode('utf-8')
+			}
 			self.send_message(message, TEXT)
+
+		# Periodically send info message (currently every second)
+		if time.time() - self.last_info_sent > 1:
+			info_message: dict = {
+				"type": MessageType.Info,
+				"payload": {
+					"current_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+					"status": self.__status_text[self.status]
+				}
+			}
+			self.send_message(info_message, TEXT)
+			self.last_info_sent = time.time()
 
 	def on_message(self, message: dict):
 		try:
@@ -74,11 +96,10 @@ class Worker(ClientBase):
 		logging.debug("Handling command: %s" % command)
 
 		if command == Command.StartJob:
-			job_name = message["name"]
 			if self.status != WorkerStatus.Waiting:
-				error_reason: str = "Worker status busy; cannot start '%s'" % job_name
-				raise WorkerError(error_reason)
+				raise WorkerError("Worker status busy")
 
+			job_name: str = message["name"]
 			handler = self.__command_handlers[job_name]
 			job_kwargs = {
 				"event": self.job_event,
@@ -98,7 +119,7 @@ class Worker(ClientBase):
 
 if __name__ == "__main__":
 	format_ = "%(asctime)s %(levelname)s: %(message)s"
-	logging.basicConfig(format=format_, level=logging.DEBUG, datefmt="%H:%M:%S")
+	logging.basicConfig(format=format_, level=logging.INFO, datefmt="%H:%M:%S")
 
 	w = Worker()
 	w.run()

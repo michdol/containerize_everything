@@ -108,7 +108,6 @@ class Server(object):
 		except Exception as e:
 			client_socket.close()
 			logging.error("Exception handling new connection: {}".format(e))
-			raise e
 
 	def handle_message(self, client_socket: socket.socket):
 		"""

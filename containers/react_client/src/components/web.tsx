@@ -32,7 +32,9 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 			console.log('Websocket client connected');
 		})
 		this.client.onmessage((message: any) => {
-			console.log("Message", message);
+			// console.log("Message", message);
+			let data = JSON.parse(message.data);
+			console.log("Message type: ", data.type, "payload: ", data.payload);
 		})
 	}
 
@@ -63,8 +65,14 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 			"name": "word_counter",
 			"command": 1, // start job
 			"args": {
-				"url": "https://www.bbc.com",
-				"word": "coronavirus"
+				"url": [
+					"https://www.bbc.com",
+					"https://news.yahoo.com/",
+					"https://www.huffpost.com/",
+					"https://news.google.com/topstories",
+				],
+				"word": "coronavirus",
+				"required_workers": 4,
 			},
 		})
 		this.client.send(payload);

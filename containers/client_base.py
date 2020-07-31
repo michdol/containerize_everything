@@ -49,8 +49,11 @@ class ClientBase(object):
 				if not self.send_queue.empty():
 					message, opcode = self.send_queue.get()
 					_info_message = message if opcode == TEXT else "%d bytes" % len(message)
-					logging.info("Sending {} - {}".format(opcode, _info_message))
-					self.server.send_message(message, opcode)
+					# Suppress constant stream of logs
+					if message["type"] != MessageType.Info:
+						logging.info("Sending {} - {}".format(opcode, _info_message))
+					payload: bytes = json.dumps(message).encode('utf-8')
+					self.server.send_message(payload, opcode)
 				self.main_loop()
 		except Exception as e:
 			raise e
@@ -66,11 +69,11 @@ class ClientBase(object):
 
 	def authenticate(self):
 		# TODO: implement authentication
-		payload: bytes = json.dumps({
+		message: bytes = json.dumps({
 			"type": MessageType.Authentication,
-			"payload": self.client_type,
+			"payload": self.client_type
 		}).encode('utf-8')
-		self.server.send_message(payload, TEXT)
+		self.server.send_message(message, TEXT)
 
 	def receive_message_subroutine(self):
 		while self.is_running:
@@ -109,12 +112,12 @@ class ClientBase(object):
 		except Exception as e:
 			logging.error("Error while trying to close connection: {}".format(e))
 
-	def send_message(self, message: bytes, opcode: int):
+	def send_message(self, message: dict, opcode: int):
 		self.send_queue.put((message, opcode))
 
 	def respond_with_error(self, reason: str):
-		errror_message: bytes = json.dumps({
+		error_message: dict = {
 			"type": MessageType.Error,
-			"payload": reason,
-		}).encode('utf-8')
-		self.send_message(errror_message, TEXT)
+			"payload": reason
+		}
+		self.send_message(error_message, TEXT)

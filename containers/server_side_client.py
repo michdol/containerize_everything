@@ -45,7 +45,7 @@ class ClientWebSocketBase(WebSocket):
 			MessageType.Error: self.error_handler,
 		}
 
-	def handle_message(self):
+	def handle_message(self) -> Optional[ServerResponse]:
 		frame: Optional[Frame] = self.handle_data()
 		if not frame:
 			return None
@@ -89,7 +89,7 @@ class ClientWebSocketBase(WebSocket):
 		return (response, TEXT)
 
 	def info_handler(self, info: dict) -> ServerResponse:
-		logging.info("{} handling info {}".format(self, info))
+		#logging.info("{} handling info {}".format(self, info))
 		response = self.generate_response(MessageType.Message, "Ok")
 		return response, TEXT
 
@@ -185,3 +185,7 @@ class WorkerWebSocket(ClientWebSocketBase):
 		response: ServerResponse = super().job_results_handler(results)
 		self.server.broadcast_message(json.dumps(results).encode('utf-8'))
 		return response
+
+	def info_handler(self, info: dict) -> ServerResponse:
+		response: ServerResponse = super().info_handler(info)
+		self.server.broadcast_message(json.dumps(info).encode('utf-8'))

@@ -272,7 +272,7 @@ class WebSocket(object):
 
 	def send_message(self, message: bytes, opcode: int):
 		frame: Frame = Frame.create_frame(message, opcode, mask=not self.is_client)
-		logging.debug("Sending response {} : {!r}".format(frame, frame.payload))
+		logging.debug("Sending {} : {!r}".format(frame, frame.payload))
 		self.send_buffer(frame.frame)
 
 	def send_buffer(self, buff: bytes, send_all: bool=False) -> Optional[bytes]:
@@ -321,7 +321,8 @@ class WebSocket(object):
 				chunk = self.socket.recv(buff - len(chunks))
 				if not chunk:
 					break
-				logging.debug("CHUNK: {!r}".format(chunk))
+				# Supress logging
+				# logging.debug("CHUNK: {!r}".format(chunk))
 				chunks.extend(chunk)
 		except socket.error as e:
 			err = e.args[0]

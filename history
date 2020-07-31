@@ -1,3 +1,10 @@
+28/07/2020 Worker info message
+
+1. Clean up old files
+2. Implemented periodical info message from Worker
+
+---------------------------------------------------------------------------------
+
 28/07/2020 Server refactor
 
 1. Refactored handling clients, workers
