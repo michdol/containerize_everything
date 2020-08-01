@@ -85,7 +85,7 @@ class ClientWebSocketBase(WebSocket):
 		client.state = WebSocketState.OPEN	
 		self.server.clients[client.socket] = client
 
-		response = self.generate_response(MessageType.Authentication, "Authentication success")
+		response = self.generate_response(MessageType.Authentication, {"id": self.socket.fileno()})
 		return (response, TEXT)
 
 	def info_handler(self, info: dict) -> ServerResponse:

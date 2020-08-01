@@ -1,4 +1,11 @@
-28/07/2020 Worker info message
+01/08/2020 Frontend message displaying
+
+1. Added redux actions to process messages
+2. Added displaying messages
+
+---------------------------------------------------------------------------------
+
+31/07/2020 Worker info message
 
 1. Clean up old files
 2. Implemented periodical info message from Worker

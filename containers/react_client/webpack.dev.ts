@@ -1,3 +1,5 @@
+var path = require('path');
+
 import * as webpack from "webpack";
 import * as HtmlWebPackPlugin from "html-webpack-plugin";
 
@@ -10,7 +12,13 @@ const config: webpack.Configuration = {
   entry: "./src/index.tsx",
   resolve: {
     // Add '.ts' and '.tsx' as resolvable extensions.
-    extensions: [".ts", ".tsx", ".js", ".json"]
+    extensions: [".ts", ".tsx", ".js", ".json"],
+    // alias: {
+    //   // Add the same to jest.config
+    //   'src': path.resolve(__dirname, 'src/'),
+    //   'components': path.resolve(__dirname, 'src/components/'),
+    //   'store': path.resolve(__dirname, 'src/store/')
+    // }
   },
 
   module: {

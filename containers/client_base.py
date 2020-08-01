@@ -27,6 +27,7 @@ class ClientBase(object):
 
 		self.receive_message_thread: Optional[threading.Thread] = None
 		self.client_type: str = ""
+		self.id: int = 0
 
 	def create_websocket(self) -> WebSocket:
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -95,7 +96,8 @@ class ClientBase(object):
 		self.on_message(json.loads(message.payload))
 
 	def on_message(self, message: dict):
-		pass
+		if message["type"] == MessageType.Authentication:
+			self.id = message["payload"]["id"]
 
 	def try_close_connection(self):
 		"""

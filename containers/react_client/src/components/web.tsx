@@ -1,15 +1,28 @@
 import * as React from "react";
+import { AnyAction, bindActionCreators, Dispatch } from "redux";
+import { connect } from "react-redux";
 
 import { w3cwebsocket as W3CWebSocket } from "websocket";
 
 import { Address, WebSocketClient } from "../websocket_client/client";
+import MessagesComponent from "./Messages/messages";
+import { addNewMessage, updateWorkerInfo } from "../store/messages/actions";
 
 
 interface IState {
 	message: string;
-}
+};
 
-export default class WebsocketClient extends React.Component<{}, IState> {
+const mapDispatchToProps = (dispatch: Dispatch<AnyAction>) =>
+	bindActionCreators({
+		addNewMessage,
+		updateWorkerInfo,
+	}, dispatch
+);
+
+type TWebsocketClientProps = ReturnType<typeof mapDispatchToProps>;
+
+class WebsocketClientComponent extends React.Component<TWebsocketClientProps, IState> {
 	private client: WebSocketClient;
 	constructor(props: any) {
 		super(props);
@@ -34,7 +47,12 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 		this.client.onmessage((message: any) => {
 			// console.log("Message", message);
 			let data = JSON.parse(message.data);
-			console.log("Message type: ", data.type, "payload: ", data.payload);
+			// console.log("Message type: ", data.type, "payload: ", data.payload);
+			if (data.type === 2) {
+				this.props.updateWorkerInfo(data);
+			} else {
+				this.props.addNewMessage(data);
+			}
 		})
 	}
 
@@ -101,6 +119,7 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 	render() {
 		return (
 			<div>
+				<MessagesComponent />
 				<div>
 					<a onClick={this.debug_button}>send</a>
 				</div>
@@ -123,3 +142,5 @@ export default class WebsocketClient extends React.Component<{}, IState> {
 		)
 	}
 }
+
+export default connect(null, mapDispatchToProps)(WebsocketClientComponent);

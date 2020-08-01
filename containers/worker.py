@@ -68,6 +68,7 @@ class Worker(ClientBase):
 			info_message: dict = {
 				"type": MessageType.Info,
 				"payload": {
+					"id": self.id,
 					"current_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
 					"status": self.__status_text[self.status]
 				}
@@ -76,6 +77,7 @@ class Worker(ClientBase):
 			self.last_info_sent = time.time()
 
 	def on_message(self, message: dict):
+		super().on_message(message)
 		try:
 			message_type = message["type"]
 			if message_type == MessageType.Command:
